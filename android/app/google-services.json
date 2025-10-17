@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "74923973525",
+    "firebase_url": "https://kagri-iot-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "kagri-iot",
+    "storage_bucket": "kagri-iot.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:74923973525:android:aaddfc7f4121d7ebbb749c",
+        "android_client_info": {
+          "package_name": "Kagri.Iot.App"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAE-nk2GsNh0o5L6D9CMlUtrVHAbfQ_ZEg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
