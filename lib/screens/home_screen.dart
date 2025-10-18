@@ -8,6 +8,7 @@ import '../utils/constants.dart';
 import 'package:intl/intl.dart';
 import 'network_status_screen.dart';
 import 'provisioning_screen.dart';
+import 'gateway_selection_screen.dart';
 import 'settings_screen.dart';
 import 'login_screen.dart';
 import 'device_chart_screen.dart';
@@ -70,35 +71,10 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           IconButton(
             icon: const Icon(Icons.add),
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const ProvisioningScreen(),
-                ),
-              );
-
-              // If provision succeeded, start timeout timer and show syncing UI
-              if (result == true && mounted) {
-                setState(() {
-                  _justProvisioned = true;
-                });
-
-                // Set 10 second timeout
-                _provisioningTimeoutTimer?.cancel();
-                _provisioningTimeoutTimer = Timer(
-                  const Duration(seconds: 10),
-                  () {
-                    if (mounted) {
-                      setState(() {
-                        _justProvisioned = false;
-                      });
-                    }
-                  },
-                );
-              }
+            onPressed: () {
+              _showAddDeviceOptions(context);
             },
-            tooltip: 'Thêm Gateway',
+            tooltip: 'Thêm Thiết bị',
           ),
           // Logout button
           PopupMenuButton<String>(
@@ -1498,6 +1474,83 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ],
       ),
+    );
+  }
+
+  /// Show device type selection bottom sheet
+  void _showAddDeviceOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  'Chọn loại thiết bị',
+                  style: AppTextStyles.heading2,
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.router, color: AppColors.primary),
+                title: const Text('Gateway (BLE)'),
+                subtitle: const Text('Kết nối trực tiếp qua Bluetooth'),
+                onTap: () async {
+                  Navigator.pop(context); // Close bottom sheet
+                  
+                  // Navigate to BLE provisioning
+                  final result = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const ProvisioningScreen(),
+                    ),
+                  );
+
+                  // If provision succeeded, start timeout timer and show syncing UI
+                  if (result == true && mounted) {
+                    setState(() {
+                      _justProvisioned = true;
+                    });
+
+                    // Set 10 second timeout
+                    _provisioningTimeoutTimer?.cancel();
+                    _provisioningTimeoutTimer = Timer(
+                      const Duration(seconds: 10),
+                      () {
+                        if (mounted) {
+                          setState(() {
+                            _justProvisioned = false;
+                          });
+                        }
+                      },
+                    );
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.sensors, color: AppColors.accent),
+                title: const Text('Node (qua Gateway)'),
+                subtitle: const Text('Provisioning từ xa qua Firebase'),
+                onTap: () {
+                  Navigator.pop(context); // Close bottom sheet
+                  
+                  // Navigate to gateway selection
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const GatewaySelectionScreen(),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
     );
   }
 }
