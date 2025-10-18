@@ -24,15 +24,18 @@ class _ProvisioningProgressScreenState
     extends State<ProvisioningProgressScreen> {
   final FirebaseCommandService _commandService = FirebaseCommandService();
   StreamSubscription? _resultSubscription;
+  Timer? _countdownTimer;
 
-  String? _commandId;
+  String? _commandId; // Used for identifying the provisioning command
   bool _isStarting = true;
   bool _isActive = false;
+  bool _isNetkeyPhase = false; // 2nd phase - netkey assignment
   bool _isCompleted = false;
   bool _isFailed = false;
 
   int _nodesDiscovered = 0;
-  int _timeRemainingMs = 0;
+  double _timeRemainingSeconds = 0; // Changed to double for smooth countdown
+  int _totalDurationSeconds = 300; // 5 minutes
   String _statusMessage = 'Initializing...';
   String? _errorMessage;
 
@@ -46,6 +49,7 @@ class _ProvisioningProgressScreenState
   void dispose() {
     _resultSubscription?.cancel();
     _commandService.dispose();
+    _countdownTimer?.cancel();
     super.dispose();
   }
 
@@ -55,31 +59,34 @@ class _ProvisioningProgressScreenState
       if (user == null) {
         setState(() {
           _isFailed = true;
-          _errorMessage = 'Not logged in';
-          _statusMessage = 'Authentication error';
+          _errorMessage = 'Chưa đăng nhập';
+          _statusMessage = 'Lỗi xác thực';
         });
         return;
       }
 
       setState(() {
         _isStarting = true;
-        _statusMessage = 'Sending command to Gateway...';
+        _statusMessage = 'Gửi lệnh đến Gateway...';
       });
 
-      // Send start provisioning command
-      final durationMs = widget.durationMinutes * 60 * 1000;
+      // Send start provisioning command (5 minutes)
       _commandId = await _commandService.sendStartProvisioningCommand(
         userUID: user.uid,
         gatewayMAC: widget.gateway.mac,
-        durationMs: durationMs,
+        durationMs: _totalDurationSeconds * 1000,
       );
 
       setState(() {
         _isStarting = false;
         _isActive = true;
-        _timeRemainingMs = durationMs;
-        _statusMessage = 'Provisioning started';
+        _isNetkeyPhase = false;
+        _timeRemainingSeconds = _totalDurationSeconds.toDouble();
+        _statusMessage = 'Đang tìm các thiết bị ở gần';
       });
+
+      // Start smooth countdown timer (update every 100ms)
+      _startCountdownTimer();
 
       // Listen to command results
       _resultSubscription = _commandService
@@ -95,7 +102,7 @@ class _ProvisioningProgressScreenState
               setState(() {
                 if (result.progress != null) {
                   _nodesDiscovered = result.progress!.nodesDiscovered;
-                  _timeRemainingMs = result.progress!.timeRemainingMs;
+                  // Don't override timeRemainingSeconds - use countdown timer instead
                 }
 
                 _statusMessage = result.message;
@@ -103,13 +110,17 @@ class _ProvisioningProgressScreenState
                 // Check if completed
                 if (result.isCompleted) {
                   _isActive = false;
+                  _isNetkeyPhase = false;
                   _isCompleted = true;
-                  _statusMessage = 'Provisioning completed successfully';
+                  _statusMessage = 'Cấp phát Netkey thành công';
+                  _countdownTimer?.cancel();
                 } else if (result.isFailed) {
                   _isActive = false;
+                  _isNetkeyPhase = false;
                   _isFailed = true;
                   _errorMessage = result.message;
-                  _statusMessage = 'Provisioning failed';
+                  _statusMessage = 'Cấp phát Netkey thất bại';
+                  _countdownTimer?.cancel();
                 }
               });
             },
@@ -118,8 +129,9 @@ class _ProvisioningProgressScreenState
               setState(() {
                 _isFailed = true;
                 _errorMessage = error.toString();
-                _statusMessage = 'Connection error';
+                _statusMessage = 'Lỗi kết nối';
               });
+              _countdownTimer?.cancel();
             },
           );
     } catch (e) {
@@ -127,9 +139,63 @@ class _ProvisioningProgressScreenState
         _isStarting = false;
         _isFailed = true;
         _errorMessage = e.toString();
-        _statusMessage = 'Failed to start provisioning';
+        _statusMessage = 'Không thể bắt đầu cấp phát';
       });
     }
+  }
+
+  void _startCountdownTimer() {
+    _countdownTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      setState(() {
+        _timeRemainingSeconds -= 0.1;
+        
+        // Phase transition at 4 minutes (240 seconds)
+        if (!_isNetkeyPhase && _timeRemainingSeconds <= 240) {
+          _isNetkeyPhase = true;
+          _statusMessage = 'Đang cấu hình mạng';
+          _sendNetkeyCommandAuto();
+        }
+
+        // Stop at 0
+        if (_timeRemainingSeconds <= 0) {
+          _timeRemainingSeconds = 0;
+          timer.cancel();
+          _completeProvisioning();
+        }
+      });
+    });
+  }
+
+  Future<void> _sendNetkeyCommandAuto() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      await _commandService.sendNetkeyCommand(
+        userUID: user.uid,
+        gatewayMAC: widget.gateway.mac,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = e.toString();
+      });
+    }
+  }
+
+  void _completeProvisioning() {
+    if (!mounted) return;
+    setState(() {
+      _isActive = false;
+      _isNetkeyPhase = false;
+      _isCompleted = true;
+      _statusMessage = 'Cấp phát Netkey hoàn tất';
+    });
   }
 
   Future<void> _stopProvisioning() async {
@@ -158,6 +224,40 @@ class _ProvisioningProgressScreenState
     }
   }
 
+  Future<void> _sendNetkeyCommand() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      setState(() {
+        _statusMessage = 'Sending netkey assignment command...';
+      });
+
+      await _commandService.sendNetkeyCommand(
+        userUID: user.uid,
+        gatewayMAC: widget.gateway.mac,
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Netkey assignment command sent'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      setState(() {
+        _statusMessage = 'Netkey command sent. Waiting for nodes...';
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Lỗi gửi lệnh: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   void _finish() {
     Navigator.pop(context);
   }
@@ -178,7 +278,7 @@ class _ProvisioningProgressScreenState
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Add Nodes'),
+          title: const Text('Thêm Nodes'),
           automaticallyImplyLeading: !_isActive,
         ),
         body: _buildBody(),
@@ -268,8 +368,8 @@ class _ProvisioningProgressScreenState
               width: 120,
               height: 120,
               child: CircularProgressIndicator(
-                value: _timeRemainingMs > 0
-                    ? 1 - (_timeRemainingMs / (widget.durationMinutes * 60000))
+                value: _timeRemainingSeconds > 0
+                    ? 1 - (_timeRemainingSeconds / _totalDurationSeconds)
                     : 0,
                 strokeWidth: 8,
                 backgroundColor: Colors.grey[300],
@@ -278,19 +378,19 @@ class _ProvisioningProgressScreenState
             Column(
               children: [
                 Text(
-                  _formatTime(_timeRemainingMs),
+                  _formatTimeFromSeconds(_timeRemainingSeconds),
                   style: const TextStyle(
                     fontSize: 32,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const Text('remaining', style: TextStyle(color: Colors.grey)),
+                const Text('còn lại', style: TextStyle(color: Colors.grey)),
               ],
             ),
           ],
         ),
         const SizedBox(height: 24),
-        const Text('🔍 Scanning for nodes...', style: TextStyle(fontSize: 18)),
+        const Text('🔍 Đang quét các Node...', style: TextStyle(fontSize: 18)),
         const SizedBox(height: 8),
         Text(_statusMessage, style: const TextStyle(color: Colors.grey)),
       ],
@@ -311,7 +411,7 @@ class _ProvisioningProgressScreenState
         ),
         const SizedBox(height: 24),
         const Text(
-          '✅ Provisioning Complete',
+          '✅ Cấu hình hoàn tất',
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
@@ -339,7 +439,7 @@ class _ProvisioningProgressScreenState
         ),
         const SizedBox(height: 24),
         const Text(
-          '❌ Provisioning Failed',
+          '❌ Cấu hình thất bại',
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
@@ -368,15 +468,15 @@ class _ProvisioningProgressScreenState
               children: [
                 _buildStatItem(
                   icon: Icons.devices,
-                  label: 'Nodes Discovered',
+                  label: 'Nodes Khám phá',
                   value: _nodesDiscovered.toString(),
                   color: Colors.blue,
                 ),
                 if (_isActive)
                   _buildStatItem(
                     icon: Icons.timer,
-                    label: 'Time Left',
-                    value: _formatTime(_timeRemainingMs),
+                    label: 'Thời gian còn lại',
+                    value: _formatTimeFromSeconds(_timeRemainingSeconds),
                     color: Colors.orange,
                   ),
               ],
@@ -386,7 +486,7 @@ class _ProvisioningProgressScreenState
               const Divider(),
               const SizedBox(height: 8),
               Text(
-                '🎉 $_nodesDiscovered new node${_nodesDiscovered > 1 ? 's' : ''} joined the network!',
+                '🎉 $_nodesDiscovered Node mới${_nodesDiscovered > 1 ? 's' : ''} đã tham gia mạng!',
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
@@ -433,28 +533,45 @@ class _ProvisioningProgressScreenState
       return Column(
         children: [
           const Text(
-            '💡 Turn on your nodes now',
+            '💡 Bật các Node của bạn ngay bây giờ',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 8),
           const Text(
-            'Gateway is broadcasting in fast discovery mode',
+            'Gateway đang phát sóng ở chế độ khám phá nhanh',
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _stopProvisioning,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                padding: const EdgeInsets.all(16),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _sendNetkeyCommand,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    padding: const EdgeInsets.all(16),
+                  ),
+                  child: const Text(
+                    'Cấp Netkey',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                ),
               ),
-              child: const Text(
-                'Stop Provisioning',
-                style: TextStyle(fontSize: 16),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _stopProvisioning,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    padding: const EdgeInsets.all(16),
+                  ),
+                  child: const Text(
+                    'Dừng Cấu hình',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
         ],
       );
@@ -466,15 +583,15 @@ class _ProvisioningProgressScreenState
       child: ElevatedButton(
         onPressed: _finish,
         style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(16)),
-        child: const Text('Done', style: TextStyle(fontSize: 16)),
+        child: const Text('Hoàn tất', style: TextStyle(fontSize: 16)),
       ),
     );
   }
 
-  String _formatTime(int milliseconds) {
-    final seconds = (milliseconds / 1000).ceil();
-    final minutes = seconds ~/ 60;
-    final remainingSeconds = seconds % 60;
+  String _formatTimeFromSeconds(double seconds) {
+    final totalSeconds = seconds.toInt();
+    final minutes = totalSeconds ~/ 60;
+    final remainingSeconds = totalSeconds % 60;
     return '$minutes:${remainingSeconds.toString().padLeft(2, '0')}';
   }
 
@@ -482,19 +599,19 @@ class _ProvisioningProgressScreenState
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Stop Provisioning?'),
+        title: const Text('Dừng Cấu hình?'),
         content: const Text(
-          'Provisioning is still in progress. Do you want to stop and go back?',
+          'Cấu hình đang được thực hiện. Bạn có muốn dừng và quay lại?',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Continue'),
+            child: const Text('Tiếp tục'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Stop'),
+            child: const Text('Dừng'),
           ),
         ],
       ),

@@ -65,6 +65,31 @@ class FirebaseCommandService {
     return commandId;
   }
 
+  /// Send netkey assignment command to Gateway
+  /// This tells the gateway to distribute netkey to newly discovered nodes
+  Future<String> sendNetkeyCommand({
+    required String userUID,
+    required String gatewayMAC,
+  }) async {
+    final commandId = 'cmd-${DateTime.now().millisecondsSinceEpoch}';
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+
+    final commandData = {
+      'id': commandId,
+      'type': 'assign_netkey',
+      'params': {},
+      'timestamp': timestamp,
+      'priority': 8, // High priority for netkey assignment
+    };
+
+    final commandPath =
+        'users/$userUID/commands/$gatewayMAC/pending/$commandId';
+    await _database.child(commandPath).set(commandData);
+
+    debugPrint('📤 Sent assign_netkey command: $commandId');
+    return commandId;
+  }
+
   /// Listen to command results from Gateway
   ///
   /// Returns a stream of command result updates
