@@ -796,15 +796,29 @@ class _ProvisioningProgressDialogState
     with SingleTickerProviderStateMixin {
   late AnimationController _progressController;
   int _currentStep = 0;
+  double _smoothProgress = 0.0;
   bool _isComplete = false;
+  Timer? _progressTimer;
 
   final List<String> _steps = [
     'Kết nối với Gateway...',
     'Gửi thông tin WiFi...',
     'Cấu hình bảo mật...',
+    'Gửi User ID và Firebase token...',
     'Khởi động lại thiết bị...',
     'Đang kết nối WiFi...',
     'Hoàn tất cấu hình!',
+  ];
+
+  // Duration for each step in seconds
+  final List<int> _stepDurations = [
+    3, // Kết nối Gateway
+    4, // Gửi WiFi
+    3, // Cấu hình bảo mật
+    3, // Gửi User ID
+    4, // Khởi động lại
+    5, // Kết nối WiFi
+    1, // Hoàn tất
   ];
 
   @override
@@ -812,19 +826,19 @@ class _ProvisioningProgressDialogState
     super.initState();
     _progressController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 500),
     );
     _startProvisioning();
   }
 
   @override
   void dispose() {
+    _progressTimer?.cancel();
     _progressController.dispose();
     super.dispose();
   }
 
   Future<void> _startProvisioning() async {
-    // Simulate steps with delays for better UX - Total ~12 seconds
     for (int i = 0; i < _steps.length; i++) {
       if (!mounted) return;
 
@@ -832,27 +846,58 @@ class _ProvisioningProgressDialogState
         _currentStep = i;
       });
 
-      _progressController.reset();
-      _progressController.forward();
+      // Calculate progress increment per timer tick
+      final stepDuration = _stepDurations[i];
+      final totalSteps = _steps.length;
+      final progressPerStep = 1.0 / totalSteps;
+      final targetProgress = (i + 1) / totalSteps;
 
+      // Update progress smoothly over the step duration
+      final updateInterval = 50; // Update every 50ms
+      final totalUpdates = (stepDuration * 1000) ~/ updateInterval;
+      final progressIncrement = progressPerStep / totalUpdates;
+
+      int updateCount = 0;
+      _progressTimer = Timer.periodic(Duration(milliseconds: updateInterval), (
+        timer,
+      ) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        updateCount++;
+        setState(() {
+          _smoothProgress += progressIncrement;
+          // Clamp to target progress for this step
+          if (_smoothProgress > targetProgress) {
+            _smoothProgress = targetProgress;
+          }
+        });
+
+        if (updateCount >= totalUpdates) {
+          timer.cancel();
+        }
+      });
+
+      // Actually send provisioning data at step 2 (Gửi WiFi)
       if (i == 1) {
-        // Actually send provisioning data at step 2
         await widget.onProvision();
       }
 
-      // Delay between steps - increased for better UX
-      if (i < _steps.length - 1) {
-        await Future.delayed(Duration(milliseconds: i == 1 ? 2500 : 2000));
-      }
+      // Wait for this step to complete
+      await Future.delayed(Duration(seconds: stepDuration));
+      _progressTimer?.cancel();
     }
 
     if (!mounted) return;
     setState(() {
       _isComplete = true;
+      _smoothProgress = 1.0; // Ensure 100%
     });
 
     // Auto close after showing complete
-    await Future.delayed(const Duration(milliseconds: 1200));
+    await Future.delayed(const Duration(milliseconds: 1500));
     if (mounted) {
       Navigator.pop(context);
     }
@@ -860,8 +905,6 @@ class _ProvisioningProgressDialogState
 
   @override
   Widget build(BuildContext context) {
-    final progress = (_currentStep + 1) / _steps.length;
-
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
@@ -887,20 +930,15 @@ class _ProvisioningProgressDialogState
                       backgroundColor: Colors.transparent,
                     ),
                   ),
-                  // Animated progress
+                  // Animated progress - using smooth progress
                   SizedBox(
                     width: 140,
                     height: 140,
-                    child: AnimatedBuilder(
-                      animation: _progressController,
-                      builder: (context, child) {
-                        return CircularProgressIndicator(
-                          value: progress,
-                          strokeWidth: 10,
-                          color: _isComplete ? Colors.green : Colors.blue,
-                          backgroundColor: Colors.transparent,
-                        );
-                      },
+                    child: CircularProgressIndicator(
+                      value: _smoothProgress,
+                      strokeWidth: 10,
+                      color: _isComplete ? Colors.green : Colors.blue,
+                      backgroundColor: Colors.transparent,
                     ),
                   ),
                   // Percentage text and icon
@@ -914,7 +952,7 @@ class _ProvisioningProgressDialogState
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '${(progress * 100).toInt()}%',
+                        '${(_smoothProgress * 100).toInt()}%',
                         style: TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,

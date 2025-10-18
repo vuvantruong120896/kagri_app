@@ -26,6 +26,8 @@ class _HomeScreenState extends State<HomeScreen>
   String? _selectedNodeId; // Changed from _selectedDeviceId to _selectedNodeId
   bool _justProvisioned = false; // Track if just finished provisioning
   Timer? _provisioningTimeoutTimer;
+  Timer? _countdownTimer;
+  int _remainingSeconds = 30; // Countdown from 30 seconds
   late AnimationController _syncAnimationController;
 
   @override
@@ -40,6 +42,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     _provisioningTimeoutTimer?.cancel();
+    _countdownTimer?.cancel();
     _syncAnimationController.dispose();
     super.dispose();
   }
@@ -378,10 +381,11 @@ class _HomeScreenState extends State<HomeScreen>
                             ),
                           ),
                           const SizedBox(height: AppSizes.paddingMedium),
-                          // Loading indicator
+                          // Loading indicator with progress
                           SizedBox(
                             width: 200,
                             child: LinearProgressIndicator(
+                              value: 1 - (_remainingSeconds / 30.0),
                               backgroundColor: Colors.grey[200],
                               valueColor: const AlwaysStoppedAnimation<Color>(
                                 Colors.blue,
@@ -390,10 +394,11 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                           const SizedBox(height: AppSizes.paddingSmall),
                           Text(
-                            'Timeout sau 10 giây...',
+                            'Timeout sau $_remainingSeconds giây...',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.grey[500],
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
@@ -453,14 +458,18 @@ class _HomeScreenState extends State<HomeScreen>
                                 builder: (context) => AlertDialog(
                                   title: const Row(
                                     children: [
-                                      Icon(Icons.help_outline, color: AppColors.primary),
+                                      Icon(
+                                        Icons.help_outline,
+                                        color: AppColors.primary,
+                                      ),
                                       SizedBox(width: 8),
                                       Text('Hướng dẫn'),
                                     ],
                                   ),
                                   content: Column(
                                     mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       const Text(
                                         'Có 2 cách thêm thiết bị:',
@@ -510,9 +519,11 @@ class _HomeScreenState extends State<HomeScreen>
                   // Cancel timeout when data arrives
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     _provisioningTimeoutTimer?.cancel();
+                    _countdownTimer?.cancel();
                     if (mounted) {
                       setState(() {
                         _justProvisioned = false;
+                        _remainingSeconds = 30;
                       });
                     }
                   });
@@ -1600,16 +1611,39 @@ class _HomeScreenState extends State<HomeScreen>
                   if (result == true && mounted) {
                     setState(() {
                       _justProvisioned = true;
+                      _remainingSeconds = 30; // Reset to 30 seconds
                     });
 
-                    // Set 10 second timeout
+                    // Cancel existing timers
                     _provisioningTimeoutTimer?.cancel();
+                    _countdownTimer?.cancel();
+
+                    // Start countdown timer (updates every second)
+                    _countdownTimer = Timer.periodic(
+                      const Duration(seconds: 1),
+                      (timer) {
+                        if (mounted) {
+                          setState(() {
+                            _remainingSeconds--;
+                            if (_remainingSeconds <= 0) {
+                              timer.cancel();
+                            }
+                          });
+                        } else {
+                          timer.cancel();
+                        }
+                      },
+                    );
+
+                    // Set 30 second timeout
                     _provisioningTimeoutTimer = Timer(
-                      const Duration(seconds: 10),
+                      const Duration(seconds: 30),
                       () {
+                        _countdownTimer?.cancel();
                         if (mounted) {
                           setState(() {
                             _justProvisioned = false;
+                            _remainingSeconds = 30;
                           });
                         }
                       },
@@ -1659,16 +1693,11 @@ class _HomeScreenState extends State<HomeScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                title,
-                style: AppTextStyles.heading3,
-              ),
+              Text(title, style: AppTextStyles.heading3),
               const SizedBox(height: 4),
               Text(
                 description,
-                style: AppTextStyles.body2.copyWith(
-                  color: Colors.grey[600],
-                ),
+                style: AppTextStyles.body2.copyWith(color: Colors.grey[600]),
               ),
             ],
           ),
