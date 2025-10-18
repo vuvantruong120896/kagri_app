@@ -159,12 +159,28 @@ class DataService {
   }
 
   // Firebase-only methods (for when Firebase is configured)
-  Future<void> updateNodeInfo(String nodeId, Map<String, dynamic> updates) {
-    return firebaseService.updateNodeInfo(nodeId, updates);
+  Future<void> updateNodeInfo(
+    String nodeId,
+    Map<String, dynamic> updates, {
+    String? gatewayMAC,
+  }) {
+    return firebaseService.updateNodeInfo(
+      nodeId,
+      updates,
+      gatewayMAC: gatewayMAC,
+    );
   }
 
-  Future<void> addSensorData(String nodeId, SensorData sensorData) {
-    return firebaseService.addSensorData(nodeId, sensorData);
+  Future<void> addSensorData(
+    String nodeId,
+    SensorData sensorData, {
+    String? gatewayMAC,
+  }) {
+    return firebaseService.addSensorData(
+      nodeId,
+      sensorData,
+      gatewayMAC: gatewayMAC,
+    );
   }
 
   Future<void> cleanupOldData(String nodeId, {int daysToKeep = 7}) {

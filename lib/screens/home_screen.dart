@@ -3,9 +3,13 @@ import 'dart:async';
 import '../models/sensor_data.dart';
 import '../models/device.dart';
 import '../services/data_service.dart';
+import '../services/auth_service.dart';
 import '../utils/constants.dart';
 import 'package:intl/intl.dart';
 import 'network_status_screen.dart';
+import 'provisioning_screen.dart';
+import 'settings_screen.dart';
+import 'login_screen.dart';
 import 'device_chart_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -15,79 +19,43 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   final DataService _dataService = DataService();
   String? _selectedNodeId; // Changed from _selectedDeviceId to _selectedNodeId
-  // Current list of gateway IDs (from Firebase gateways/)
-  Set<String> _gatewayIds = <String>{};
-  StreamSubscription<List<String>>? _gatewaySub;
+  bool _justProvisioned = false; // Track if just finished provisioning
+  Timer? _provisioningTimeoutTimer;
+  late AnimationController _syncAnimationController;
 
   @override
   void initState() {
     super.initState();
-    // Listen for gateways so we can mark devices that are actually gateways
-    _gatewaySub = _dataService.getGatewaysStream().listen(
-      (list) {
-        setState(() {
-          _gatewayIds = list.toSet();
-        });
-      },
-      onError: (_) {
-        // ignore gateway errors, leave set empty
-      },
-    );
+    _syncAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(); // Repeat infinitely without rebuild
   }
 
   @override
   void dispose() {
-    _gatewaySub?.cancel();
+    _provisioningTimeoutTimer?.cancel();
+    _syncAnimationController.dispose();
     super.dispose();
   }
 
   String _displayName(Device device) {
-    return _gatewayIds.contains(device.nodeId) ? 'Gateway' : device.name;
+    return device.displayName;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('KAGRI'),
-            Text(
-              'Nguồn: ${_dataService.dataSourceInfo}',
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.normal,
-              ),
-            ),
-          ],
-        ),
+        title: const Text('KAGRI'),
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
-          IconButton(
-            icon: Icon(
-              _dataService.useMockData ? Icons.cloud_off : Icons.cloud,
-            ),
-            onPressed: () {
-              setState(() {
-                _dataService.setUseMockData(!_dataService.useMockData);
-              });
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Chuyển sang ${_dataService.dataSourceInfo}'),
-                  duration: const Duration(seconds: 2),
-                ),
-              );
-            },
-            tooltip: _dataService.useMockData
-                ? 'Chuyển sang Firebase'
-                : 'Chuyển sang Mock Data',
-          ),
           IconButton(
             icon: const Icon(Icons.device_hub),
             onPressed: () {
@@ -98,18 +66,125 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               );
             },
+            tooltip: 'Network Status',
+          ),
+          IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: () async {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ProvisioningScreen(),
+                ),
+              );
+
+              // If provision succeeded, start timeout timer and show syncing UI
+              if (result == true && mounted) {
+                setState(() {
+                  _justProvisioned = true;
+                });
+
+                // Set 10 second timeout
+                _provisioningTimeoutTimer?.cancel();
+                _provisioningTimeoutTimer = Timer(
+                  const Duration(seconds: 10),
+                  () {
+                    if (mounted) {
+                      setState(() {
+                        _justProvisioned = false;
+                      });
+                    }
+                  },
+                );
+              }
+            },
+            tooltip: 'Thêm Gateway',
+          ),
+          // Logout button
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.account_circle),
+            onSelected: (value) async {
+              if (value == 'logout') {
+                // Show confirmation dialog
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Logout'),
+                    content: const Text('Are you sure you want to logout?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Logout'),
+                      ),
+                    ],
+                  ),
+                );
+
+                if (confirmed == true) {
+                  await AuthService().signOut();
+                  if (mounted) {
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    );
+                  }
+                }
+              } else if (value == 'settings') {
+                // Navigate to Settings screen
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const SettingsScreen(),
+                  ),
+                );
+              } else if (value == 'profile') {
+                // TODO: Navigate to profile screen
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Profile screen coming soon')),
+                );
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem<String>(
+                value: 'profile',
+                child: Row(
+                  children: [
+                    const Icon(Icons.person),
+                    const SizedBox(width: 12),
+                    Text(AuthService().currentUser?.email ?? 'User'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings),
+                    SizedBox(width: 12),
+                    Text('Cài đặt'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout, color: Colors.red),
+                    SizedBox(width: 12),
+                    Text('Logout', style: TextStyle(color: Colors.red)),
+                  ],
+                ),
+              ),
+            ],
             tooltip: 'Routing Table & Gateway Status',
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
               setState(() {}); // Trigger rebuild to refresh data
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () {
-              // Navigate to settings
             },
           ),
         ],
@@ -268,27 +343,116 @@ class _HomeScreenState extends State<HomeScreen> {
                 }
 
                 if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.sensors_off, size: 64, color: Colors.grey),
-                        const SizedBox(height: AppSizes.paddingMedium),
-                        Text(
-                          'Không có thiết bị',
-                          style: AppTextStyles.heading2,
-                        ),
-                        const SizedBox(height: AppSizes.paddingSmall),
-                        Text(
-                          _dataService.useMockData
-                              ? 'Đang dùng mock data nhưng chưa có devices'
-                              : 'Chưa có node nào trong Firebase.\nKiểm tra gateway đã push routing_table chưa.',
-                          style: AppTextStyles.body2,
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  );
+                  // Only show syncing UI if just provisioned
+                  if (_justProvisioned) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // Animated syncing icon (smooth rotation without rebuild)
+                          AnimatedBuilder(
+                            animation: _syncAnimationController,
+                            builder: (context, child) {
+                              return Transform.rotate(
+                                angle:
+                                    _syncAnimationController.value *
+                                    2 *
+                                    3.14159,
+                                child: child,
+                              );
+                            },
+                            child: Icon(
+                              Icons.sync,
+                              size: 64,
+                              color: Colors.blue.withOpacity(0.7),
+                            ),
+                          ),
+                          const SizedBox(height: AppSizes.paddingMedium),
+                          Text(
+                            'Đang đồng bộ dữ liệu',
+                            style: AppTextStyles.heading2.copyWith(
+                              color: Colors.blue[700],
+                            ),
+                          ),
+                          const SizedBox(height: AppSizes.paddingSmall),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 40),
+                            child: Text(
+                              'Gateway đang khởi động và kết nối với máy chủ.\nVui lòng đợi trong giây lát...',
+                              style: AppTextStyles.body2.copyWith(
+                                color: Colors.grey[600],
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                          const SizedBox(height: AppSizes.paddingMedium),
+                          // Loading indicator
+                          SizedBox(
+                            width: 200,
+                            child: LinearProgressIndicator(
+                              backgroundColor: Colors.grey[200],
+                              valueColor: const AlwaysStoppedAnimation<Color>(
+                                Colors.blue,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: AppSizes.paddingSmall),
+                          Text(
+                            'Timeout sau 10 giây...',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[500],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  } else {
+                    // Normal empty state - no devices yet
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.sensors_off,
+                            size: 64,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: AppSizes.paddingMedium),
+                          Text(
+                            'Chưa có thiết bị',
+                            style: AppTextStyles.heading2.copyWith(
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                          const SizedBox(height: AppSizes.paddingSmall),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 40),
+                            child: Text(
+                              'Nhấn nút + để thêm Gateway mới',
+                              style: AppTextStyles.body2.copyWith(
+                                color: Colors.grey[600],
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                }
+
+                // Data exists - cancel timeout and clear provisioning flag
+                if (_justProvisioned) {
+                  // Cancel timeout when data arrives
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _provisioningTimeoutTimer?.cancel();
+                    if (mounted) {
+                      setState(() {
+                        _justProvisioned = false;
+                      });
+                    }
+                  });
                 }
 
                 var devices = snapshot.data!;
@@ -424,7 +588,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Row(
                 children: [
                   Icon(
-                    Icons.router,
+                    device.isGateway ? Icons.router : Icons.sensors,
                     color: device.isOnline
                         ? AppColors.online
                         : AppColors.offline,
@@ -435,13 +599,44 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          _displayName(device),
-                          style: AppTextStyles.heading3,
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                device.displayName,
+                                style: AppTextStyles.heading3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (device.isGateway) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue[100],
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text(
+                                  'GW',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    color: Colors.blue,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                         Text(
-                          'Node ID: ${device.nodeId}',
+                          device.isGateway
+                              ? 'MAC: ${device.gatewayMAC ?? device.nodeId}'
+                              : 'Node: ${device.nodeId}',
                           style: AppTextStyles.caption,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
@@ -981,11 +1176,39 @@ class _HomeScreenState extends State<HomeScreen> {
               final device = devices[index];
               return ListTile(
                 leading: Icon(
-                  Icons.router,
+                  device.isGateway ? Icons.router : Icons.sensors,
                   color: device.isOnline ? AppColors.online : AppColors.offline,
                 ),
-                title: Text(_displayName(device)),
-                subtitle: Text('Node ID: ${device.nodeId}'),
+                title: Row(
+                  children: [
+                    Text(_displayName(device)),
+                    const SizedBox(width: 8),
+                    if (device.isGateway)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[100],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'Gateway',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.blue,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                subtitle: Text(
+                  device.isGateway
+                      ? 'MAC: ${device.gatewayMAC ?? device.nodeId}'
+                      : 'Node ID: ${device.nodeId}',
+                ),
                 trailing: Icon(
                   Icons.arrow_forward_ios,
                   size: 16,
@@ -1196,7 +1419,9 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
       // Update in Firebase
-      await _dataService.updateNodeInfo(device.nodeId, {'name': newName});
+      await _dataService.updateNodeInfo(device.nodeId, {
+        'name': newName,
+      }, gatewayMAC: device.gatewayMAC);
 
       // Show success
       if (context.mounted) {
