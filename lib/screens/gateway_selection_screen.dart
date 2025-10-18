@@ -78,9 +78,7 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ProvisioningProgressScreen(
-          gateway: gateway,
-        ),
+        builder: (context) => ProvisioningProgressScreen(gateway: gateway),
       ),
     );
   }
@@ -91,10 +89,7 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
       appBar: AppBar(
         title: const Text('Select Gateway'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadGateways,
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadGateways),
         ],
       ),
       body: _buildBody(),
@@ -103,9 +98,7 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_error != null) {

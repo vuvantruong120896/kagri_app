@@ -84,44 +84,44 @@ class _ProvisioningProgressScreenState
       // Listen to command results
       _resultSubscription = _commandService
           .listenToCommandResults(
-        userUID: user.uid,
-        gatewayMAC: widget.gateway.mac,
-      )
+            userUID: user.uid,
+            gatewayMAC: widget.gateway.mac,
+          )
           .listen(
-        (result) {
-          if (!mounted) return;
+            (result) {
+              if (!mounted) return;
 
-          // Update UI with latest progress
-          setState(() {
-            if (result.progress != null) {
-              _nodesDiscovered = result.progress!.nodesDiscovered;
-              _timeRemainingMs = result.progress!.timeRemainingMs;
-            }
+              // Update UI with latest progress
+              setState(() {
+                if (result.progress != null) {
+                  _nodesDiscovered = result.progress!.nodesDiscovered;
+                  _timeRemainingMs = result.progress!.timeRemainingMs;
+                }
 
-            _statusMessage = result.message;
+                _statusMessage = result.message;
 
-            // Check if completed
-            if (result.isCompleted) {
-              _isActive = false;
-              _isCompleted = true;
-              _statusMessage = 'Provisioning completed successfully';
-            } else if (result.isFailed) {
-              _isActive = false;
-              _isFailed = true;
-              _errorMessage = result.message;
-              _statusMessage = 'Provisioning failed';
-            }
-          });
-        },
-        onError: (error) {
-          if (!mounted) return;
-          setState(() {
-            _isFailed = true;
-            _errorMessage = error.toString();
-            _statusMessage = 'Connection error';
-          });
-        },
-      );
+                // Check if completed
+                if (result.isCompleted) {
+                  _isActive = false;
+                  _isCompleted = true;
+                  _statusMessage = 'Provisioning completed successfully';
+                } else if (result.isFailed) {
+                  _isActive = false;
+                  _isFailed = true;
+                  _errorMessage = result.message;
+                  _statusMessage = 'Provisioning failed';
+                }
+              });
+            },
+            onError: (error) {
+              if (!mounted) return;
+              setState(() {
+                _isFailed = true;
+                _errorMessage = error.toString();
+                _statusMessage = 'Connection error';
+              });
+            },
+          );
     } catch (e) {
       setState(() {
         _isStarting = false;
@@ -152,9 +152,9 @@ class _ProvisioningProgressScreenState
         _statusMessage = 'Provisioning stopped manually';
       });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to stop: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to stop: $e')));
     }
   }
 
@@ -253,10 +253,7 @@ class _ProvisioningProgressScreenState
       children: [
         const CircularProgressIndicator(),
         const SizedBox(height: 16),
-        Text(
-          _statusMessage,
-          style: const TextStyle(fontSize: 16),
-        ),
+        Text(_statusMessage, style: const TextStyle(fontSize: 16)),
       ],
     );
   }
@@ -287,24 +284,15 @@ class _ProvisioningProgressScreenState
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const Text(
-                  'remaining',
-                  style: TextStyle(color: Colors.grey),
-                ),
+                const Text('remaining', style: TextStyle(color: Colors.grey)),
               ],
             ),
           ],
         ),
         const SizedBox(height: 24),
-        const Text(
-          '🔍 Scanning for nodes...',
-          style: TextStyle(fontSize: 18),
-        ),
+        const Text('🔍 Scanning for nodes...', style: TextStyle(fontSize: 18)),
         const SizedBox(height: 8),
-        Text(
-          _statusMessage,
-          style: const TextStyle(color: Colors.grey),
-        ),
+        Text(_statusMessage, style: const TextStyle(color: Colors.grey)),
       ],
     );
   }
@@ -319,11 +307,7 @@ class _ProvisioningProgressScreenState
             color: Colors.green,
             shape: BoxShape.circle,
           ),
-          child: const Icon(
-            Icons.check,
-            size: 60,
-            color: Colors.white,
-          ),
+          child: const Icon(Icons.check, size: 60, color: Colors.white),
         ),
         const SizedBox(height: 24),
         const Text(
@@ -350,15 +334,8 @@ class _ProvisioningProgressScreenState
         Container(
           width: 120,
           height: 120,
-          decoration: BoxDecoration(
-            color: Colors.red,
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(
-            Icons.close,
-            size: 60,
-            color: Colors.white,
-          ),
+          decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+          child: const Icon(Icons.close, size: 60, color: Colors.white),
         ),
         const SizedBox(height: 24),
         const Text(
@@ -442,13 +419,7 @@ class _ProvisioningProgressScreenState
             color: color,
           ),
         ),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 12,
-            color: Colors.grey,
-          ),
-        ),
+        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
       ],
     );
   }
@@ -494,13 +465,8 @@ class _ProvisioningProgressScreenState
       width: double.infinity,
       child: ElevatedButton(
         onPressed: _finish,
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.all(16),
-        ),
-        child: const Text(
-          'Done',
-          style: TextStyle(fontSize: 16),
-        ),
+        style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(16)),
+        child: const Text('Done', style: TextStyle(fontSize: 16)),
       ),
     );
   }

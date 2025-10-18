@@ -6,13 +6,13 @@ import 'package:flutter/foundation.dart';
 class FirebaseCommandService {
   final DatabaseReference _database = FirebaseDatabase.instance.ref();
   StreamSubscription? _resultSubscription;
-  
+
   /// Send start provisioning command to Gateway
-  /// 
+  ///
   /// [userUID] - Current user's Firebase UID
   /// [gatewayMAC] - Gateway MAC address (e.g., "AA:BB:CC:DD:EE:FF")
   /// [durationMs] - Provisioning duration in milliseconds
-  /// 
+  ///
   /// Returns command ID for tracking
   Future<String> sendStartProvisioningCommand({
     required String userUID,
@@ -22,26 +22,25 @@ class FirebaseCommandService {
     // Generate unique command ID
     final commandId = 'cmd-${DateTime.now().millisecondsSinceEpoch}';
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    
+
     // Create command data
     final commandData = {
       'id': commandId,
       'type': 'start_provisioning',
-      'params': {
-        'durationMs': durationMs,
-      },
+      'params': {'durationMs': durationMs},
       'timestamp': timestamp,
       'priority': 5,
     };
-    
+
     // Write to pending queue
-    final commandPath = 'users/$userUID/commands/$gatewayMAC/pending/$commandId';
+    final commandPath =
+        'users/$userUID/commands/$gatewayMAC/pending/$commandId';
     await _database.child(commandPath).set(commandData);
-    
+
     debugPrint('📤 Sent start_provisioning command: $commandId');
     return commandId;
   }
-  
+
   /// Send stop provisioning command to Gateway
   Future<String> sendStopProvisioningCommand({
     required String userUID,
@@ -49,7 +48,7 @@ class FirebaseCommandService {
   }) async {
     final commandId = 'cmd-${DateTime.now().millisecondsSinceEpoch}';
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    
+
     final commandData = {
       'id': commandId,
       'type': 'stop_provisioning',
@@ -57,23 +56,24 @@ class FirebaseCommandService {
       'timestamp': timestamp,
       'priority': 10, // Higher priority to stop immediately
     };
-    
-    final commandPath = 'users/$userUID/commands/$gatewayMAC/pending/$commandId';
+
+    final commandPath =
+        'users/$userUID/commands/$gatewayMAC/pending/$commandId';
     await _database.child(commandPath).set(commandData);
-    
+
     debugPrint('📤 Sent stop_provisioning command: $commandId');
     return commandId;
   }
-  
+
   /// Listen to command results from Gateway
-  /// 
+  ///
   /// Returns a stream of command result updates
   Stream<CommandResult> listenToCommandResults({
     required String userUID,
     required String gatewayMAC,
   }) {
     final resultPath = 'users/$userUID/command_results/$gatewayMAC';
-    
+
     return _database.child(resultPath).onValue.map((event) {
       if (event.snapshot.value == null) {
         return CommandResult(
@@ -83,9 +83,9 @@ class FirebaseCommandService {
           gatewayOnline: false,
         );
       }
-      
+
       final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-      
+
       return CommandResult(
         commandId: data['last_command_id'] ?? '',
         commandType: data['last_command_type'] ?? '',
@@ -96,7 +96,8 @@ class FirebaseCommandService {
         lastPoll: data['last_poll'] ?? 0,
         progress: data['progress'] != null
             ? ProvisioningProgress.fromMap(
-                Map<String, dynamic>.from(data['progress'] as Map))
+                Map<String, dynamic>.from(data['progress'] as Map),
+              )
             : null,
         result: data['result'] != null
             ? Map<String, dynamic>.from(data['result'] as Map)
@@ -104,7 +105,7 @@ class FirebaseCommandService {
       );
     });
   }
-  
+
   /// Check if command is completed (moved to completed/ or failed/)
   Future<CommandStatus?> checkCommandStatus({
     required String userUID,
@@ -112,9 +113,10 @@ class FirebaseCommandService {
     required String commandId,
   }) async {
     // Check completed
-    final completedPath = 'users/$userUID/commands/$gatewayMAC/completed/$commandId';
+    final completedPath =
+        'users/$userUID/commands/$gatewayMAC/completed/$commandId';
     final completedSnapshot = await _database.child(completedPath).get();
-    
+
     if (completedSnapshot.exists) {
       final data = Map<String, dynamic>.from(completedSnapshot.value as Map);
       return CommandStatus(
@@ -126,11 +128,11 @@ class FirebaseCommandService {
         details: data['details'],
       );
     }
-    
+
     // Check failed
     final failedPath = 'users/$userUID/commands/$gatewayMAC/failed/$commandId';
     final failedSnapshot = await _database.child(failedPath).get();
-    
+
     if (failedSnapshot.exists) {
       final data = Map<String, dynamic>.from(failedSnapshot.value as Map);
       return CommandStatus(
@@ -142,11 +144,12 @@ class FirebaseCommandService {
         failedAt: data['failedAt'] ?? 0,
       );
     }
-    
+
     // Check processing
-    final processingPath = 'users/$userUID/commands/$gatewayMAC/processing/$commandId';
+    final processingPath =
+        'users/$userUID/commands/$gatewayMAC/processing/$commandId';
     final processingSnapshot = await _database.child(processingPath).get();
-    
+
     if (processingSnapshot.exists) {
       return CommandStatus(
         commandId: commandId,
@@ -155,11 +158,11 @@ class FirebaseCommandService {
         message: 'Command is being executed',
       );
     }
-    
+
     // Still pending or not found
     return null;
   }
-  
+
   /// Cleanup old commands
   Future<void> cleanupOldCommands({
     required String userUID,
@@ -169,10 +172,12 @@ class FirebaseCommandService {
     // Get completed commands
     final completedPath = 'users/$userUID/commands/$gatewayMAC/completed';
     final completedSnapshot = await _database.child(completedPath).get();
-    
+
     if (completedSnapshot.exists) {
-      final commands = Map<String, dynamic>.from(completedSnapshot.value as Map);
-      
+      final commands = Map<String, dynamic>.from(
+        completedSnapshot.value as Map,
+      );
+
       // Sort by timestamp (oldest first)
       final sortedKeys = commands.keys.toList()
         ..sort((a, b) {
@@ -180,7 +185,7 @@ class FirebaseCommandService {
           final bTime = (commands[b] as Map)['completedAt'] ?? 0;
           return (aTime as int).compareTo(bTime as int);
         });
-      
+
       // Delete old commands (keep only last N)
       if (sortedKeys.length > keepLastN) {
         final toDelete = sortedKeys.take(sortedKeys.length - keepLastN);
@@ -191,7 +196,7 @@ class FirebaseCommandService {
       }
     }
   }
-  
+
   /// Cancel listening to results
   void dispose() {
     _resultSubscription?.cancel();
@@ -209,7 +214,7 @@ class CommandResult {
   final int lastPoll;
   final ProvisioningProgress? progress;
   final Map<String, dynamic>? result;
-  
+
   CommandResult({
     required this.commandId,
     this.commandType = '',
@@ -221,7 +226,7 @@ class CommandResult {
     this.progress,
     this.result,
   });
-  
+
   bool get isProcessing => status == 'processing';
   bool get isCompleted => status == 'completed';
   bool get isFailed => status == 'failed';
@@ -231,21 +236,21 @@ class CommandResult {
 class ProvisioningProgress {
   final int nodesDiscovered;
   final int timeRemainingMs;
-  
+
   ProvisioningProgress({
     required this.nodesDiscovered,
     required this.timeRemainingMs,
   });
-  
+
   factory ProvisioningProgress.fromMap(Map<String, dynamic> map) {
     return ProvisioningProgress(
       nodesDiscovered: map['nodes_discovered'] ?? 0,
       timeRemainingMs: map['time_remaining_ms'] ?? 0,
     );
   }
-  
+
   int get timeRemainingSec => (timeRemainingMs / 1000).ceil();
-  
+
   String get timeRemainingFormatted {
     final seconds = timeRemainingSec;
     final minutes = seconds ~/ 60;
@@ -264,7 +269,7 @@ class CommandStatus {
   final int? completedAt;
   final int? failedAt;
   final dynamic details;
-  
+
   CommandStatus({
     required this.commandId,
     required this.status,
@@ -275,6 +280,6 @@ class CommandStatus {
     this.failedAt,
     this.details,
   });
-  
+
   bool get isSuccess => result == 'success';
 }

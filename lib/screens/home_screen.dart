@@ -281,8 +281,24 @@ class _HomeScreenState extends State<HomeScreen>
             child: StreamBuilder<List<Device>>(
               stream: _dataService.getDevicesStream(),
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
+                // Show loading only on first connection (no data yet)
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: AppSizes.paddingMedium),
+                        Text(
+                          'Đang kết nối Firebase...',
+                          style: AppTextStyles.body2.copyWith(
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
                 }
 
                 if (snapshot.hasError) {
@@ -391,13 +407,13 @@ class _HomeScreenState extends State<HomeScreen>
                         children: [
                           Icon(
                             Icons.sensors_off,
-                            size: 64,
+                            size: 80,
                             color: Colors.grey[400],
                           ),
-                          const SizedBox(height: AppSizes.paddingMedium),
+                          const SizedBox(height: AppSizes.paddingLarge),
                           Text(
                             'Chưa có thiết bị',
-                            style: AppTextStyles.heading2.copyWith(
+                            style: AppTextStyles.heading1.copyWith(
                               color: Colors.grey[700],
                             ),
                           ),
@@ -405,12 +421,83 @@ class _HomeScreenState extends State<HomeScreen>
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 40),
                             child: Text(
-                              'Nhấn nút + để thêm Gateway mới',
-                              style: AppTextStyles.body2.copyWith(
+                              'Bắt đầu bằng cách thêm Gateway hoặc Node vào hệ thống của bạn',
+                              style: AppTextStyles.body1.copyWith(
                                 color: Colors.grey[600],
                               ),
                               textAlign: TextAlign.center,
                             ),
+                          ),
+                          const SizedBox(height: AppSizes.paddingLarge),
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              _showAddDeviceOptions(context);
+                            },
+                            icon: const Icon(Icons.add),
+                            label: const Text('Thêm thiết bị'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 32,
+                                vertical: 16,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: AppSizes.paddingMedium),
+                          TextButton.icon(
+                            onPressed: () {
+                              // Show help or guide
+                              showDialog(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Row(
+                                    children: [
+                                      Icon(Icons.help_outline, color: AppColors.primary),
+                                      SizedBox(width: 8),
+                                      Text('Hướng dẫn'),
+                                    ],
+                                  ),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Có 2 cách thêm thiết bị:',
+                                        style: AppTextStyles.heading3,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      _buildHelpItem(
+                                        Icons.router,
+                                        'Gateway (BLE)',
+                                        'Kết nối trực tiếp qua Bluetooth để provisioning WiFi và Firebase',
+                                      ),
+                                      const SizedBox(height: 12),
+                                      _buildHelpItem(
+                                        Icons.sensors,
+                                        'Node (qua Gateway)',
+                                        'Sử dụng Gateway đã có để provisioning nhiều Node từ xa qua Firebase',
+                                      ),
+                                    ],
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('Đóng'),
+                                    ),
+                                    ElevatedButton(
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        _showAddDeviceOptions(context);
+                                      },
+                                      child: const Text('Thêm ngay'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.help_outline),
+                            label: const Text('Cách thêm thiết bị?'),
                           ),
                         ],
                       ),
@@ -1500,7 +1587,7 @@ class _HomeScreenState extends State<HomeScreen>
                 subtitle: const Text('Kết nối trực tiếp qua Bluetooth'),
                 onTap: () async {
                   Navigator.pop(context); // Close bottom sheet
-                  
+
                   // Navigate to BLE provisioning
                   final result = await Navigator.push(
                     context,
@@ -1536,7 +1623,7 @@ class _HomeScreenState extends State<HomeScreen>
                 subtitle: const Text('Provisioning từ xa qua Firebase'),
                 onTap: () {
                   Navigator.pop(context); // Close bottom sheet
-                  
+
                   // Navigate to gateway selection
                   Navigator.push(
                     context,
@@ -1551,6 +1638,42 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         );
       },
+    );
+  }
+
+  /// Build help item widget
+  Widget _buildHelpItem(IconData icon, String title, String description) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 24, color: AppColors.primary),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: AppTextStyles.heading3,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: AppTextStyles.body2.copyWith(
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
