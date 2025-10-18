@@ -376,7 +376,7 @@ class _ProvisioningScreenState extends State<ProvisioningScreen>
               }
             },
             icon: const Icon(Icons.send),
-            label: const Text('Provision'),
+            label: const Text('Cấu hình'),
           ),
         ],
       ),
@@ -410,7 +410,7 @@ class _ProvisioningScreenState extends State<ProvisioningScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Provision Gateway')),
+      appBar: AppBar(title: const Text('Cấu hình Gateway')),
       body: Padding(
         padding: const EdgeInsets.all(AppSizes.paddingMedium),
         child: Column(

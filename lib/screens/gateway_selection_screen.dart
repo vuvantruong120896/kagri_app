@@ -33,15 +33,15 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) {
         setState(() {
-          _error = 'Not logged in';
+          _error = 'Chưa đăng nhập';
           _isLoading = false;
         });
         return;
       }
 
-      // Load gateways from Firebase
-      final gatewaysPath = 'users/${user.uid}/gateways';
-      final snapshot = await _database.child(gatewaysPath).get();
+      // Load gateways from Firebase - path: nodes/{userUID}/{gatewayMAC}/{nodeId}/
+      final nodesPath = 'nodes/${user.uid}';
+      final snapshot = await _database.child(nodesPath).get();
 
       if (!snapshot.exists) {
         setState(() {
@@ -54,9 +54,88 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
       final data = Map<String, dynamic>.from(snapshot.value as Map);
       final gateways = <GatewayInfo>[];
 
-      for (final entry in data.entries) {
-        final gatewayData = Map<String, dynamic>.from(entry.value as Map);
-        gateways.add(GatewayInfo.fromMap(entry.key, gatewayData));
+      print('🔍 [Gateway Selection] Loading gateways from: nodes/${user.uid}');
+      print('🔍 [Gateway Selection] Data keys: ${data.keys.toList()}');
+
+      // Iterate through gateway MACs (first level under nodes/{userUID})
+      for (final gatewayEntry in data.entries) {
+        final gatewayMAC = gatewayEntry.key;
+        final gatewayData = gatewayEntry.value;
+
+        print('🔍 [Gateway Selection] Processing gatewayMAC: $gatewayMAC');
+
+        if (gatewayData is Map) {
+          final gatewayMap = Map<String, dynamic>.from(gatewayData);
+
+          // Look for gateway device (usually has same MAC as nodeId or isGateway flag)
+          Map<String, dynamic>? gatewayInfo;
+          int nodeCount = 0;
+          int? latestTimestamp;
+
+          // Count nodes and find gateway device info
+          for (final nodeEntry in gatewayMap.entries) {
+            final nodeId = nodeEntry.key;
+            final nodeData = nodeEntry.value;
+
+            if (nodeData is Map) {
+              final nodeMap = Map<String, dynamic>.from(nodeData);
+              nodeCount++;
+
+              // Check if this is the gateway device
+              final info = nodeMap['info'];
+              if (info is Map) {
+                final infoMap = Map<String, dynamic>.from(info);
+                final isGateway =
+                    infoMap['isGateway'] == true ||
+                    nodeId.toUpperCase() == gatewayMAC.toUpperCase();
+
+                if (isGateway) {
+                  gatewayInfo = infoMap;
+                  // Use lastSeen from gateway info if available
+                  final infoLastSeen = infoMap['lastSeen'] as int?;
+                  if (infoLastSeen != null) {
+                    latestTimestamp = infoLastSeen;
+                  }
+                }
+              }
+
+              // Track latest timestamp from latest_data (only if gateway lastSeen not found)
+              if (latestTimestamp == null) {
+                final latestData = nodeMap['latest_data'];
+                if (latestData is Map) {
+                  final latestMap = Map<String, dynamic>.from(latestData);
+                  final timestamp = latestMap['timestamp'] as int?;
+                  if (timestamp != null) {
+                    if (latestTimestamp == null ||
+                        timestamp > latestTimestamp) {
+                      latestTimestamp = timestamp;
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // Create gateway info from collected data
+          final gateway = GatewayInfo(
+            mac: gatewayMAC,
+            name: gatewayInfo?['name'] as String?,
+            lastSeen: latestTimestamp,
+            online: gatewayInfo?['online'] as bool?,
+            nodeCount: nodeCount,
+            status: gatewayInfo,
+          );
+
+          print('📊 [Gateway Selection] Gateway created:');
+          print('   MAC: $gatewayMAC');
+          print('   Name: ${gateway.name}');
+          print('   LastSeen: $latestTimestamp');
+          print('   Online flag: ${gatewayInfo?['online']}');
+          print('   NodeCount: $nodeCount');
+          print('   IsOnline: ${gateway.isOnline}');
+
+          gateways.add(gateway);
+        }
       }
 
       // Sort by last seen (most recent first)
@@ -87,7 +166,7 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Select Gateway'),
+        title: const Text('Chọn Gateway'),
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadGateways),
         ],
@@ -108,11 +187,11 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
           children: [
             const Icon(Icons.error_outline, size: 64, color: Colors.red),
             const SizedBox(height: 16),
-            Text('Error: $_error'),
+            Text('Lỗi: $_error'),
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: _loadGateways,
-              child: const Text('Retry'),
+              child: const Text('Thử lại'),
             ),
           ],
         ),
@@ -127,19 +206,19 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
             const Icon(Icons.router_outlined, size: 64, color: Colors.grey),
             const SizedBox(height: 16),
             const Text(
-              'No Gateways Found',
+              'Không tìm thấy Gateway',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             const Text(
-              'Please add a Gateway first',
+              'Vui lòng thêm Gateway trước',
               style: TextStyle(color: Colors.grey),
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: () => Navigator.pop(context),
               icon: const Icon(Icons.add),
-              label: const Text('Add Gateway'),
+              label: const Text('Thêm Gateway'),
             ),
           ],
         ),
@@ -162,64 +241,111 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: isOnline ? Colors.green : Colors.grey,
-          child: Icon(
-            isOnline ? Icons.router : Icons.router_outlined,
-            color: Colors.white,
-          ),
-        ),
-        title: Text(
-          gateway.name ?? gateway.mac,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Column(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('MAC: ${gateway.mac}'),
+            // Header: Icon, Name, Status
+            Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: isOnline ? Colors.green : Colors.grey,
+                  child: Icon(
+                    isOnline ? Icons.router : Icons.router_outlined,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        gateway.name ?? 'Gateway',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(
+                            isOnline ? Icons.wifi : Icons.wifi_off,
+                            size: 14,
+                            color: isOnline ? Colors.green : Colors.grey,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            isOnline ? 'Online' : 'Offline',
+                            style: TextStyle(
+                              color: isOnline ? Colors.green : Colors.grey,
+                              fontWeight: FontWeight.w500,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: isOnline
+                      ? () => _startProvisioning(gateway)
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Cấu hình'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+            // Details: MAC, Last seen, Node count
+            Row(
+              children: [
+                const Icon(Icons.badge, size: 14, color: Colors.grey),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'MAC: ${gateway.mac}',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 4),
             Row(
               children: [
-                Icon(
-                  isOnline ? Icons.wifi : Icons.wifi_off,
-                  size: 16,
-                  color: isOnline ? Colors.green : Colors.grey,
-                ),
+                const Icon(Icons.access_time, size: 14, color: Colors.grey),
                 const SizedBox(width: 4),
                 Text(
-                  isOnline ? 'Online' : 'Offline',
-                  style: TextStyle(
-                    color: isOnline ? Colors.green : Colors.grey,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Text(
                   lastSeenText,
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
             ),
             if (gateway.nodeCount != null && gateway.nodeCount! > 0)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  '${gateway.nodeCount} nodes connected',
-                  style: const TextStyle(fontSize: 12, color: Colors.blue),
+                child: Row(
+                  children: [
+                    const Icon(Icons.devices, size: 14, color: Colors.blue),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${gateway.nodeCount} Node${gateway.nodeCount! > 1 ? 's' : ''} đã kết nối',
+                      style: const TextStyle(fontSize: 12, color: Colors.blue),
+                    ),
+                  ],
                 ),
               ),
           ],
         ),
-        trailing: ElevatedButton(
-          onPressed: isOnline ? () => _startProvisioning(gateway) : null,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blue,
-            foregroundColor: Colors.white,
-          ),
-          child: const Text('Provision'),
-        ),
-        isThreeLine: true,
       ),
     );
   }
@@ -256,30 +382,53 @@ class GatewayInfo {
     );
   }
 
-  bool get isOnline {
-    if (online != null) return online!;
-    if (lastSeen == null) return false;
+  // Helper to convert timestamp to milliseconds (handles both seconds and milliseconds)
+  int? get _lastSeenMillis {
+    if (lastSeen == null) return null;
 
-    // Consider online if last seen within 2 minutes
-    final now = DateTime.now().millisecondsSinceEpoch;
-    return (now - lastSeen!) < 120000; // 2 minutes
+    // If timestamp is less than year 2000 in milliseconds (946684800000),
+    // it's likely in seconds, so convert to milliseconds
+    if (lastSeen! < 946684800000) {
+      return lastSeen! * 1000;
+    }
+    return lastSeen;
+  }
+
+  bool get isOnline {
+    // If online flag is explicitly set, use it
+    if (online != null) return online!;
+
+    // If we have recent lastSeen data, consider online
+    if (_lastSeenMillis != null) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // Consider online if last seen within 5 minutes
+      return (now - _lastSeenMillis!) < 300000; // 5 minutes
+    }
+
+    // If no lastSeen data but nodeCount > 0, assume online
+    // (Gateway must be online to have connected nodes)
+    if (nodeCount != null && nodeCount! > 0) {
+      return true;
+    }
+
+    return false;
   }
 
   String get lastSeenFormatted {
-    if (lastSeen == null) return 'Never';
+    if (_lastSeenMillis == null) return 'Chưa xem';
 
     final now = DateTime.now();
-    final lastSeenDate = DateTime.fromMillisecondsSinceEpoch(lastSeen!);
+    final lastSeenDate = DateTime.fromMillisecondsSinceEpoch(_lastSeenMillis!);
     final difference = now.difference(lastSeenDate);
 
     if (difference.inSeconds < 60) {
-      return 'Just now';
+      return 'Vừa xong';
     } else if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m ago';
+      return '${difference.inMinutes}p trước';
     } else if (difference.inHours < 24) {
-      return '${difference.inHours}h ago';
+      return '${difference.inHours}h trước';
     } else {
-      return '${difference.inDays}d ago';
+      return '${difference.inDays}d trước';
     }
   }
 }
