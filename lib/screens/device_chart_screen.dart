@@ -400,7 +400,42 @@ class _DeviceChartScreenState extends State<DeviceChartScreen> {
     final minY = values.reduce((a, b) => a < b ? a : b);
     final maxY = values.reduce((a, b) => a > b ? a : b);
     final range = maxY - minY;
-    final padding = range * 0.1; // 10% padding
+
+    // Handle case where all values are the same (e.g., bad data)
+    if (range == 0 || range.isNaN) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.info_outline, size: 64, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text(
+              'Dữ liệu không thay đổi',
+              style: AppTextStyles.body1.copyWith(color: Colors.grey),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Tất cả giá trị đều giống nhau: ${values.first.toStringAsFixed(2)}$_selectedMetric',
+              style: AppTextStyles.caption.copyWith(color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Add padding with minimum threshold to prevent negative values
+    double padding = range * 0.1; // 10% padding
+
+    // For battery charts, ensure we don't go below 0V
+    double chartMinY = minY - padding;
+    double chartMaxY = maxY + padding;
+
+    if (_selectedMetric == 'battery' && chartMinY < 0) {
+      chartMinY = 0;
+      // Adjust maxY to maintain visual balance
+      chartMaxY = maxY + (padding * 2);
+    }
 
     Color lineColor;
     String yAxisLabel;
@@ -497,8 +532,8 @@ class _DeviceChartScreenState extends State<DeviceChartScreen> {
         ),
         minX: 0,
         maxX: (spots.length - 1).toDouble(),
-        minY: minY - padding,
-        maxY: maxY + padding,
+        minY: chartMinY,
+        maxY: chartMaxY,
         lineBarsData: [
           LineChartBarData(
             spots: spots,
