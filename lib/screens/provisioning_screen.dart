@@ -39,7 +39,66 @@ class _ProvisioningScreenState extends State<ProvisioningScreen>
     super.dispose();
   }
 
-  void _startScan() {
+  void _startScan() async {
+    // Check Bluetooth state first
+    if (!await _bleService.isBluetoothReady()) {
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange[100],
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.bluetooth_disabled,
+                  color: Colors.orange[700],
+                  size: 32,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Bluetooth chưa sẵn sàng',
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: const Text(
+            'Vui lòng bật Bluetooth và cấp quyền cho ứng dụng.',
+            style: TextStyle(fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Đóng'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _startScan(); // Retry
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Thử lại'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _results.clear();
       _scanning = true;
@@ -234,11 +293,107 @@ class _ProvisioningScreenState extends State<ProvisioningScreen>
       }
     } catch (e) {
       if (!mounted) return;
-      // Close loading dialog if still open
-      Navigator.pop(context);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red),
+      // Close loading dialog if still open
+      try {
+        Navigator.pop(context);
+      } catch (_) {}
+
+      // Parse error message for user-friendly display
+      String errorMessage = 'Lỗi kết nối BLE';
+      String errorDetail = e.toString();
+
+      if (errorDetail.contains('133') ||
+          errorDetail.contains('ANDROID_SPECIFIC_ERROR')) {
+        errorMessage = 'Lỗi kết nối Bluetooth';
+        errorDetail =
+            'Không thể kết nối với Gateway. Vui lòng:\n'
+            '• Tắt và bật lại Bluetooth\n'
+            '• Đảm bảo Gateway đang ở gần\n'
+            '• Thử lại sau vài giây';
+      } else if (errorDetail.contains('timeout')) {
+        errorMessage = 'Kết nối quá thời gian';
+        errorDetail =
+            'Gateway không phản hồi. Vui lòng kiểm tra:\n'
+            '• Gateway đã bật chưa?\n'
+            '• Gateway có đang ở chế độ provisioning không?';
+      } else if (errorDetail.contains('User not logged in')) {
+        errorMessage = 'Lỗi xác thực';
+        errorDetail = 'Vui lòng đăng nhập lại';
+      }
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.red[100],
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.error_outline,
+                  color: Colors.red,
+                  size: 32,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(errorMessage, style: const TextStyle(fontSize: 18)),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(errorDetail, style: const TextStyle(fontSize: 14)),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 20, color: Colors.grey[600]),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Lỗi chi tiết: ${e.toString().split('\n').first}',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Đóng'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                // Retry provision
+                _showWifiDialog(gateway);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Thử lại'),
+            ),
+          ],
+        ),
       );
     } finally {
       if (device != null) {

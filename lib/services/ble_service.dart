@@ -15,6 +15,27 @@ class BleProvisioningService {
   static const String responseCharUuid =
       "0000ffb2-0000-1000-8000-00805f9b34fb"; // notify/indicate
 
+  /// Check if Bluetooth is available and turned on
+  Future<bool> isBluetoothReady() async {
+    try {
+      if (await FlutterBluePlus.isSupported == false) {
+        print('[BLE] Bluetooth not supported on this device');
+        return false;
+      }
+
+      final state = await FlutterBluePlus.adapterState.first;
+      if (state != BluetoothAdapterState.on) {
+        print('[BLE] Bluetooth is not turned on: $state');
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      print('[BLE] Error checking Bluetooth state: $e');
+      return false;
+    }
+  }
+
   Stream<List<ScanResult>> scanGateways({
     Duration timeout = const Duration(seconds: 5),
   }) async* {
@@ -25,11 +46,45 @@ class BleProvisioningService {
 
   Future<BluetoothDevice> connect(ScanResult result) async {
     final device = result.device;
-    await device.connect(
-      autoConnect: false,
-      timeout: const Duration(seconds: 10),
-    );
-    return device;
+
+    // Android BLE connection can be flaky - retry up to 3 times
+    int maxRetries = 3;
+    int attempt = 0;
+
+    while (attempt < maxRetries) {
+      try {
+        print('[BLE] Connection attempt ${attempt + 1}/$maxRetries...');
+
+        // Ensure device is disconnected first
+        try {
+          await device.disconnect();
+          await Future.delayed(const Duration(milliseconds: 500));
+        } catch (_) {}
+
+        await device.connect(
+          autoConnect: false,
+          timeout: const Duration(seconds: 15),
+        );
+
+        print('[BLE] Connected successfully!');
+        return device;
+      } catch (e) {
+        attempt++;
+        print('[BLE] Connection attempt $attempt failed: $e');
+
+        if (attempt >= maxRetries) {
+          throw Exception(
+            'Kết nối BLE thất bại sau $maxRetries lần thử. '
+            'Vui lòng thử lại hoặc khởi động lại Bluetooth.',
+          );
+        }
+
+        // Wait before retry (longer for each attempt)
+        await Future.delayed(Duration(seconds: attempt));
+      }
+    }
+
+    throw Exception('Không thể kết nối BLE');
   }
 
   Future<void> disconnect(BluetoothDevice device) async {

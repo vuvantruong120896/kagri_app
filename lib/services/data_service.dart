@@ -58,9 +58,12 @@ class DataService {
       return _mockDataService.getMockDevicesStream();
     } else {
       try {
+        // Return stream directly - Firebase will handle connection
+        // Only show error if Firebase actually fails (not during normal init)
         return firebaseService.getNodesStream();
       } catch (e) {
-        print('Firebase error, falling back to mock data: $e');
+        print('Firebase error: $e');
+        // Fallback to mock data on error
         useMockData = true;
         return _mockDataService.getMockDevicesStream();
       }

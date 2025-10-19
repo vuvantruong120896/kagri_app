@@ -305,6 +305,50 @@ class _HomeScreenState extends State<HomeScreen>
                 }
 
                 if (snapshot.hasError) {
+                  final errorMessage = snapshot.error.toString();
+                  final isTimeout = errorMessage.contains('timeout');
+
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.error_outline,
+                          size: 64,
+                          color: AppColors.danger,
+                        ),
+                        const SizedBox(height: AppSizes.paddingMedium),
+                        Text(
+                          isTimeout
+                              ? 'Kết nối Firebase Timeout'
+                              : 'Lỗi kết nối Firebase',
+                          style: AppTextStyles.heading2,
+                        ),
+                        const SizedBox(height: AppSizes.paddingSmall),
+                        Text(
+                          isTimeout
+                              ? 'Kết nối tới Firebase mất quá lâu\nNhấn Reload để thử lại'
+                              : snapshot.error.toString(),
+                          style: AppTextStyles.body2,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: AppSizes.paddingMedium),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            // Trigger rebuild by creating new DataService or using setState
+                            setState(() {
+                              // Rebuild the widget tree
+                            });
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Reload'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                if (snapshot.hasError) {
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -1594,8 +1638,7 @@ class _HomeScreenState extends State<HomeScreen>
               const Divider(height: 1),
               ListTile(
                 leading: const Icon(Icons.router, color: AppColors.primary),
-                title: const Text('Gateway (BLE)'),
-                subtitle: const Text('Kết nối trực tiếp qua Bluetooth'),
+                title: const Text('Gateway'),
                 onTap: () async {
                   Navigator.pop(context); // Close bottom sheet
 
@@ -1653,8 +1696,7 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               ListTile(
                 leading: const Icon(Icons.sensors, color: AppColors.accent),
-                title: const Text('Node (qua Gateway)'),
-                subtitle: const Text('Provisioning từ xa qua Firebase'),
+                title: const Text('Nodes'),
                 onTap: () {
                   Navigator.pop(context); // Close bottom sheet
 

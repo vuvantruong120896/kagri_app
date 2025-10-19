@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 import '../services/firebase_command_service.dart';
 import 'gateway_selection_screen.dart';
 
@@ -20,11 +22,12 @@ class ProvisioningProgressScreen extends StatefulWidget {
       _ProvisioningProgressScreenState();
 }
 
-class _ProvisioningProgressScreenState
-    extends State<ProvisioningProgressScreen> {
+class _ProvisioningProgressScreenState extends State<ProvisioningProgressScreen>
+    with TickerProviderStateMixin {
   final FirebaseCommandService _commandService = FirebaseCommandService();
   StreamSubscription? _resultSubscription;
   Timer? _countdownTimer;
+  late AnimationController _radarController;
 
   String? _commandId; // Used for identifying the provisioning command
   bool _isStarting = true;
@@ -34,14 +37,19 @@ class _ProvisioningProgressScreenState
   bool _isFailed = false;
 
   int _nodesDiscovered = 0;
+  List<Map<String, dynamic>> _nodesList = []; // Store nodes with RSSI data
   double _timeRemainingSeconds = 0; // Changed to double for smooth countdown
-  int _totalDurationSeconds = 300; // 5 minutes
+  int _totalDurationSeconds = 240; // 4 minutes (changed from 5)
   String _statusMessage = 'Initializing...';
   String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
+    _radarController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..repeat();
     _startProvisioning();
   }
 
@@ -50,6 +58,7 @@ class _ProvisioningProgressScreenState
     _resultSubscription?.cancel();
     _commandService.dispose();
     _countdownTimer?.cancel();
+    _radarController.dispose();
     super.dispose();
   }
 
@@ -70,6 +79,13 @@ class _ProvisioningProgressScreenState
         _statusMessage = 'Gửi lệnh đến Gateway...';
       });
 
+      // CRITICAL: Clear old result before starting new provisioning
+      final resultPath =
+          'users/${user.uid}/command_results/${widget.gateway.mac}';
+      await FirebaseDatabase.instance.ref().child(resultPath).remove();
+
+      debugPrint('🧹 Cleared old command results');
+
       // Send start provisioning command (5 minutes)
       _commandId = await _commandService.sendStartProvisioningCommand(
         userUID: user.uid,
@@ -88,6 +104,9 @@ class _ProvisioningProgressScreenState
       // Start smooth countdown timer (update every 100ms)
       _startCountdownTimer();
 
+      // Start listening to real-time routing table updates
+      _listenToRoutingTableNodes(user.uid, widget.gateway.mac);
+
       // Listen to command results
       _resultSubscription = _commandService
           .listenToCommandResults(
@@ -98,6 +117,16 @@ class _ProvisioningProgressScreenState
             (result) {
               if (!mounted) return;
 
+              // CRITICAL: Only process results for current command
+              // Ignore old results from previous commands
+              if (result.commandId.isNotEmpty &&
+                  result.commandId != _commandId) {
+                debugPrint(
+                  '⚠️ Ignoring result from old command: ${result.commandId}',
+                );
+                return;
+              }
+
               // Update UI with latest progress
               setState(() {
                 if (result.progress != null) {
@@ -105,7 +134,10 @@ class _ProvisioningProgressScreenState
                   // Don't override timeRemainingSeconds - use countdown timer instead
                 }
 
-                _statusMessage = result.message;
+                // Only update status message if it's meaningful
+                if (result.message.isNotEmpty && result.message != 'No data') {
+                  _statusMessage = result.message;
+                }
 
                 // Check if completed
                 if (result.isCompleted) {
@@ -145,7 +177,9 @@ class _ProvisioningProgressScreenState
   }
 
   void _startCountdownTimer() {
-    _countdownTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+    _countdownTimer = Timer.periodic(const Duration(milliseconds: 100), (
+      timer,
+    ) {
       if (!mounted) {
         timer.cancel();
         return;
@@ -153,9 +187,10 @@ class _ProvisioningProgressScreenState
 
       setState(() {
         _timeRemainingSeconds -= 0.1;
-        
-        // Phase transition at 4 minutes (240 seconds)
-        if (!_isNetkeyPhase && _timeRemainingSeconds <= 240) {
+
+        // Auto-send netkey at 3:30 (30 seconds remaining out of 4 minutes)
+        // 4 minutes = 240 seconds, so 30 seconds remaining = 210 seconds elapsed
+        if (!_isNetkeyPhase && _timeRemainingSeconds <= 30) {
           _isNetkeyPhase = true;
           _statusMessage = 'Đang cấu hình mạng';
           _sendNetkeyCommandAuto();
@@ -188,6 +223,39 @@ class _ProvisioningProgressScreenState
     }
   }
 
+  /// Listen to real-time routing table updates from Gateway
+  void _listenToRoutingTableNodes(String userUID, String gatewayMAC) {
+    _commandService
+        .listenToRoutingTableNodes(userUID: userUID, gatewayMAC: gatewayMAC)
+        .listen(
+          (nodes) {
+            if (!mounted) return;
+
+            setState(() {
+              // Update nodes list with real RSSI/SNR data
+              _nodesList = nodes
+                  .map(
+                    (node) => {
+                      'id': nodes.indexOf(node) + 1,
+                      'address': node.address,
+                      'rssi': node.rssi,
+                      'snr': node.snr,
+                      'metric': node.metric,
+                      'connection_type': node.getConnectionType(),
+                      'signal_quality': node.getSignalQuality(),
+                    },
+                  )
+                  .toList();
+
+              debugPrint('🔄 Updated nodes list: ${_nodesList.length} nodes');
+            });
+          },
+          onError: (error) {
+            debugPrint('⚠️ Error listening to routing table: $error');
+          },
+        );
+  }
+
   void _completeProvisioning() {
     if (!mounted) return;
     setState(() {
@@ -199,12 +267,60 @@ class _ProvisioningProgressScreenState
   }
 
   Future<void> _stopProvisioning() async {
+    // Show confirmation dialog before stopping
+    if (!mounted) return;
+
+    final confirmed =
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: const Text(
+              '⚠️ Dừng Cấu Hình?',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.orange,
+              ),
+            ),
+            content: const Text(
+              'Dừng cấu hình đột ngột có thể ảnh hưởng đến thiết bị. '
+              'Nên chờ cho đến khi quá trình cấu hình hoàn tất.\n\n'
+              'Bạn vẫn muốn dừng ngay bây giờ?',
+              style: TextStyle(fontSize: 14, height: 1.5),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text(
+                  'Chờ',
+                  style: TextStyle(color: Colors.blue, fontSize: 14),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text(
+                  'Dừng Ngay',
+                  style: TextStyle(
+                    color: Colors.red,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!confirmed || !mounted) return;
+
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
 
       setState(() {
-        _statusMessage = 'Stopping provisioning...';
+        _statusMessage = 'Đang dừng cấu hình...';
       });
 
       await _commandService.sendStopProvisioningCommand(
@@ -212,54 +328,36 @@ class _ProvisioningProgressScreenState
         gatewayMAC: widget.gateway.mac,
       );
 
+      if (!mounted) return;
+
       setState(() {
         _isActive = false;
         _isCompleted = true;
-        _statusMessage = 'Provisioning stopped manually';
+        _statusMessage = 'Cấu hình đã bị dừng';
+        _countdownTimer?.cancel();
       });
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to stop: $e')));
-    }
-  }
-
-  Future<void> _sendNetkeyCommand() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-
-      setState(() {
-        _statusMessage = 'Sending netkey assignment command...';
-      });
-
-      await _commandService.sendNetkeyCommand(
-        userUID: user.uid,
-        gatewayMAC: widget.gateway.mac,
-      );
-
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ Netkey assignment command sent'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-
-      setState(() {
-        _statusMessage = 'Netkey command sent. Waiting for nodes...';
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Lỗi gửi lệnh: $e'),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red),
       );
     }
   }
 
   void _finish() {
-    Navigator.pop(context);
+    // If stopped manually, pop back to Gateway selection screen
+    // Otherwise pop once (normal completion flow)
+    final wasStoppedManually = _statusMessage == 'Cấu hình đã bị dừng';
+
+    if (wasStoppedManually) {
+      // Pop twice to get back to Gateway selection screen
+      // Pop 1: provisioning progress screen
+      // Pop 2: provisioning screen (back to gateway selection)
+      Navigator.pop(context);
+      Navigator.pop(context);
+    } else {
+      Navigator.pop(context);
+    }
   }
 
   @override
@@ -288,13 +386,12 @@ class _ProvisioningProgressScreenState
 
   Widget _buildBody() {
     return Padding(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Gateway info
+          // Gateway info - compact
           _buildGatewayInfo(),
-          const SizedBox(height: 32),
+          const SizedBox(height: 16),
 
           // Status indicator
           if (_isStarting) _buildStartingIndicator(),
@@ -302,12 +399,16 @@ class _ProvisioningProgressScreenState
           if (_isCompleted) _buildCompletedIndicator(),
           if (_isFailed) _buildFailedIndicator(),
 
-          const SizedBox(height: 32),
+          const SizedBox(height: 12),
 
-          // Progress info
-          if (_isActive || _isCompleted) _buildProgressInfo(),
+          // Progress info - wrapped in Expanded to prevent overflow
+          // Only show progress info if actively provisioning or completed naturally
+          // Don't show if provisioning was stopped manually
+          if ((_isActive || _isCompleted) &&
+              !(_isCompleted && _statusMessage == 'Cấu hình đã bị dừng'))
+            Expanded(child: SingleChildScrollView(child: _buildProgressInfo())),
 
-          const Spacer(),
+          const SizedBox(height: 12),
 
           // Action buttons
           _buildActionButtons(),
@@ -318,12 +419,13 @@ class _ProvisioningProgressScreenState
 
   Widget _buildGatewayInfo() {
     return Card(
+      elevation: 1,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            const Icon(Icons.router, size: 40, color: Colors.blue),
-            const SizedBox(width: 16),
+            const Icon(Icons.router, size: 32, color: Colors.blue),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -331,13 +433,13 @@ class _ProvisioningProgressScreenState
                   Text(
                     widget.gateway.name ?? 'Gateway',
                     style: const TextStyle(
-                      fontSize: 18,
+                      fontSize: 16,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   Text(
                     widget.gateway.mac,
-                    style: const TextStyle(color: Colors.grey),
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                 ],
               ),
@@ -360,70 +462,124 @@ class _ProvisioningProgressScreenState
 
   Widget _buildActiveIndicator() {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Stack(
-          alignment: Alignment.center,
-          children: [
-            SizedBox(
-              width: 120,
-              height: 120,
-              child: CircularProgressIndicator(
-                value: _timeRemainingSeconds > 0
-                    ? 1 - (_timeRemainingSeconds / _totalDurationSeconds)
-                    : 0,
-                strokeWidth: 8,
-                backgroundColor: Colors.grey[300],
+        // Radar animation - reduced size (150x150)
+        Center(
+          child: SizedBox(
+            height: 150,
+            width: 150,
+            child: AnimatedBuilder(
+              animation: _radarController,
+              builder: (context, child) {
+                return CustomPaint(
+                  size: const Size(150, 150),
+                  painter: _RadarPainter(
+                    sweepAngle: _radarController.value * 2 * math.pi,
+                    scanning: true,
+                    deviceCount: _nodesDiscovered,
+                    nodes: _nodesList,
+                  ),
+                  child: child,
+                );
+              },
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      _nodesDiscovered > 0
+                          ? _nodesDiscovered == 1
+                                ? '1 Node'
+                                : '$_nodesDiscovered Nodes'
+                          : 'Quét...',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF00CCA3),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        // Hiển thị thời gian ở đây (tập trung ở giữa)
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.timer_outlined, color: Colors.orange, size: 22),
+            const SizedBox(width: 8),
             Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   _formatTimeFromSeconds(_timeRemainingSeconds),
                   style: const TextStyle(
-                    fontSize: 32,
+                    fontSize: 24,
                     fontWeight: FontWeight.bold,
+                    color: Colors.orange,
                   ),
                 ),
-                const Text('còn lại', style: TextStyle(color: Colors.grey)),
+                const Text(
+                  'còn lại',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
               ],
             ),
           ],
         ),
-        const SizedBox(height: 24),
-        const Text('🔍 Đang quét các Node...', style: TextStyle(fontSize: 18)),
-        const SizedBox(height: 8),
-        Text(_statusMessage, style: const TextStyle(color: Colors.grey)),
+        const SizedBox(height: 12),
+        // Ẩn "Fast discovery mode..." message khi có nodes
+        if (_nodesDiscovered == 0 && _statusMessage.contains('Fast discovery'))
+          Text(
+            _statusMessage,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, color: Colors.grey),
+          ),
       ],
     );
   }
 
   Widget _buildCompletedIndicator() {
+    // Check if stopped by user or completed naturally
+    final wasStoppedManually = _statusMessage == 'Cấu hình đã bị dừng';
+
     return Column(
       children: [
         Container(
           width: 120,
           height: 120,
           decoration: BoxDecoration(
-            color: Colors.green,
+            color: wasStoppedManually ? Colors.orange : Colors.green,
             shape: BoxShape.circle,
           ),
-          child: const Icon(Icons.check, size: 60, color: Colors.white),
+          child: Icon(
+            wasStoppedManually ? Icons.warning : Icons.check,
+            size: 60,
+            color: Colors.white,
+          ),
         ),
         const SizedBox(height: 24),
-        const Text(
-          '✅ Cấu hình hoàn tất',
+        Text(
+          wasStoppedManually ? '⚠️ Cấu hình đã dừng' : '✅ Cấu hình hoàn tất',
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
-            color: Colors.green,
+            color: wasStoppedManually ? Colors.orange : Colors.green,
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          _statusMessage,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.grey),
-        ),
+        // Only show detail text when completed naturally, not when manually stopped
+        if (!wasStoppedManually) ...[
+          const SizedBox(height: 8),
+          Text(
+            _statusMessage,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.grey, fontSize: 14),
+          ),
+        ],
       ],
     );
   }
@@ -460,67 +616,163 @@ class _ProvisioningProgressScreenState
     return Card(
       color: Colors.blue[50],
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
+            // Compact stat header
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildStatItem(
-                  icon: Icons.devices,
-                  label: 'Nodes Khám phá',
-                  value: _nodesDiscovered.toString(),
-                  color: Colors.blue,
-                ),
-                if (_isActive)
-                  _buildStatItem(
-                    icon: Icons.timer,
-                    label: 'Thời gian còn lại',
-                    value: _formatTimeFromSeconds(_timeRemainingSeconds),
-                    color: Colors.orange,
+                Icon(Icons.router, size: 20, color: Colors.blue[700]),
+                const SizedBox(width: 6),
+                Text(
+                  'Tìm thấy ${_nodesDiscovered} Node',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: Colors.blue[700],
                   ),
+                ),
               ],
             ),
-            if (_nodesDiscovered > 0 && _isCompleted) ...[
-              const SizedBox(height: 16),
-              const Divider(),
+
+            if (_nodesDiscovered > 0) ...[
               const SizedBox(height: 8),
-              Text(
-                '🎉 $_nodesDiscovered Node mới${_nodesDiscovered > 1 ? 's' : ''} đã tham gia mạng!',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.green,
+              const Divider(height: 6),
+              const SizedBox(height: 8),
+
+              // List of nodes with signal quality
+              Container(
+                constraints: const BoxConstraints(maxHeight: 200),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey[300]!),
                 ),
-                textAlign: TextAlign.center,
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  physics: const BouncingScrollPhysics(),
+                  itemCount: _nodesDiscovered,
+                  separatorBuilder: (_, __) =>
+                      Divider(height: 0.5, color: Colors.grey[200]),
+                  itemBuilder: (context, index) {
+                    // Get real data from routing table
+                    final nodeData = _nodesList[index];
+                    final rssi = nodeData['rssi'] as int? ?? -50;
+                    final snr = nodeData['snr'] as double? ?? 15.0;
+                    final address = nodeData['address'] as String? ?? '0x0000';
+
+                    // Determine signal strength color based on RSSI
+                    Color signalColor;
+                    if (rssi >= -60) {
+                      signalColor = Colors.green;
+                    } else if (rssi >= -75) {
+                      signalColor = Colors.orange;
+                    } else {
+                      signalColor = Colors.red;
+                    }
+
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      child: Row(
+                        children: [
+                          // Node icon
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.blue[100],
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Icon(
+                              Icons.router_rounded,
+                              size: 18,
+                              color: Colors.blue[700],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+
+                          // Node info
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Node ${index + 1} • $address',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 11,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                const SizedBox(height: 1),
+                                Text(
+                                  'RSSI: $rssi dBm | SNR: ${snr.toStringAsFixed(1)} dB',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+
+                          // Signal strength indicator
+                          Icon(
+                            Icons.signal_cellular_alt,
+                            size: 18,
+                            color: signalColor,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+
+            // Success message when completed
+            if (_nodesDiscovered > 0 && _isCompleted) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.green[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green[200]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.check_circle,
+                      color: Colors.green[700],
+                      size: 18,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '🎉 Cấp phát Netkey thành công cho tất cả ${_nodesDiscovered} node!',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.green[700],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildStatItem({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color color,
-  }) {
-    return Column(
-      children: [
-        Icon(icon, size: 32, color: color),
-        const SizedBox(height: 8),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
-        ),
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-      ],
     );
   }
 
@@ -532,32 +784,9 @@ class _ProvisioningProgressScreenState
     if (_isActive) {
       return Column(
         children: [
-          const Text(
-            '💡 Bật các Node của bạn ngay bây giờ',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-          ),
           const SizedBox(height: 8),
-          const Text(
-            'Gateway đang phát sóng ở chế độ khám phá nhanh',
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 24),
           Row(
             children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _sendNetkeyCommand,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    padding: const EdgeInsets.all(16),
-                  ),
-                  child: const Text(
-                    'Cấp Netkey',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
               Expanded(
                 child: ElevatedButton(
                   onPressed: _stopProvisioning,
@@ -578,13 +807,28 @@ class _ProvisioningProgressScreenState
     }
 
     // Completed or failed
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: _finish,
-        style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(16)),
-        child: const Text('Hoàn tất', style: TextStyle(fontSize: 16)),
-      ),
+    return Column(
+      children: [
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: _finish,
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.all(16),
+              backgroundColor: Colors.blue,
+            ),
+            child: const Text(
+              'Quay lại',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -617,4 +861,118 @@ class _ProvisioningProgressScreenState
       ),
     );
   }
+}
+
+/// Custom radar painter for node scanning visualization
+class _RadarPainter extends CustomPainter {
+  final double sweepAngle;
+  final bool scanning;
+  final int deviceCount;
+  final List<Map<String, dynamic>>? nodes; // Node list with RSSI data
+
+  _RadarPainter({
+    required this.sweepAngle,
+    required this.scanning,
+    required this.deviceCount,
+    this.nodes,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+
+    // Draw circles
+    final circlePaint = Paint()
+      ..color = Colors.grey[300]!
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+
+    canvas.drawCircle(center, radius * 0.33, circlePaint);
+    canvas.drawCircle(center, radius * 0.66, circlePaint);
+    canvas.drawCircle(center, radius, circlePaint);
+
+    // Draw crosshair
+    canvas.drawLine(
+      Offset(center.dx, center.dy - radius),
+      Offset(center.dx, center.dy + radius),
+      circlePaint,
+    );
+    canvas.drawLine(
+      Offset(center.dx - radius, center.dy),
+      Offset(center.dx + radius, center.dy),
+      circlePaint,
+    );
+
+    if (scanning) {
+      // Draw rotating sweep line
+      final sweepPaint = Paint()
+        ..color = Colors.green.withOpacity(0.6)
+        ..strokeWidth = 2;
+
+      final sweepX = center.dx + radius * math.cos(sweepAngle - math.pi / 2);
+      final sweepY = center.dy + radius * math.sin(sweepAngle - math.pi / 2);
+
+      canvas.drawLine(center, Offset(sweepX, sweepY), sweepPaint);
+
+      // Draw sweep area as semi-transparent gradient
+      final sweepAreaPaint = Paint()
+        ..color = Colors.green.withOpacity(0.1)
+        ..style = PaintingStyle.fill;
+
+      final path = Path()
+        ..moveTo(center.dx, center.dy)
+        ..arcTo(
+          Rect.fromCircle(center: center, radius: radius),
+          sweepAngle - math.pi / 2,
+          math.pi / 3,
+          false,
+        )
+        ..close();
+
+      canvas.drawPath(path, sweepAreaPaint);
+    }
+
+    // Draw center dot
+    final centerPaint = Paint()
+      ..color = Colors.green
+      ..style = PaintingStyle.fill;
+
+    canvas.drawCircle(center, 4, centerPaint);
+
+    // Draw detected devices as dots with fixed positions based on RSSI
+    if (deviceCount > 0) {
+      final devicePaint = Paint()
+        ..color = Colors.blue
+        ..style = PaintingStyle.fill;
+
+      for (int i = 0; i < deviceCount && i < 8; i++) {
+        // Distribute nodes around the radar in fixed positions
+        // Better RSSI = closer to center
+        // Worse RSSI = farther from center
+
+        // Generate mock RSSI if no node data provided
+        final rssi = nodes != null && i < nodes!.length
+            ? (nodes![i]['rssi'] ?? (-50 - (i * 5)))
+            : (-50 - (i * 5));
+
+        // Map RSSI to distance: stronger RSSI (closer to 0) = closer to center
+        // RSSI range: -30 (excellent) to -90 (poor)
+        // Normalize RSSI to distance: -30 → inner circle, -90 → outer circle
+        final rssiNormalized =
+            ((rssi + 90) / 60); // 0 to 1 scale (inverted, so better = closer)
+        final distance = radius * 0.2 + (1 - rssiNormalized) * radius * 0.6;
+
+        // Position nodes at fixed angles distributed around circle
+        final angle = (i * (2 * math.pi / 8)); // Fixed 45° intervals
+        final x = center.dx + distance * math.cos(angle);
+        final y = center.dy + distance * math.sin(angle);
+
+        canvas.drawCircle(Offset(x, y), 4, devicePaint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RadarPainter oldDelegate) => true;
 }

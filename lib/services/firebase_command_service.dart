@@ -222,6 +222,94 @@ class FirebaseCommandService {
     }
   }
 
+  /// Fetch routing table nodes with real RSSI/SNR data from Gateway
+  ///
+  /// [userUID] - Current user's Firebase UID
+  /// [gatewayMAC] - Gateway MAC address (e.g., "AA:BB:CC:DD:EE:FF")
+  ///
+  /// Returns list of discovered nodes with address, RSSI, SNR
+  Future<List<DiscoveredNode>> fetchRoutingTableNodes({
+    required String userUID,
+    required String gatewayMAC,
+  }) async {
+    try {
+      final routingTablePath = 'gateways/$userUID/$gatewayMAC/routing_table';
+
+      final snapshot = await _database.child(routingTablePath).get();
+
+      if (!snapshot.exists) {
+        debugPrint('⚠️ No routing table found at $routingTablePath');
+        return [];
+      }
+
+      final routingData = Map<String, dynamic>.from(snapshot.value as Map);
+
+      if (!routingData.containsKey('nodes')) {
+        debugPrint('⚠️ No nodes found in routing table');
+        return [];
+      }
+
+      final nodesMap = Map<String, dynamic>.from(routingData['nodes'] as Map);
+      final nodes = <DiscoveredNode>[];
+
+      for (final entry in nodesMap.entries) {
+        final nodeData = Map<String, dynamic>.from(entry.value as Map);
+        try {
+          nodes.add(DiscoveredNode.fromMap(nodeData));
+        } catch (e) {
+          debugPrint('⚠️ Failed to parse node ${entry.key}: $e');
+        }
+      }
+
+      debugPrint('✅ Fetched ${nodes.length} nodes from routing table');
+      return nodes;
+    } catch (e) {
+      debugPrint('❌ Error fetching routing table: $e');
+      return [];
+    }
+  }
+
+  /// Listen to routing table changes in real-time
+  ///
+  /// [userUID] - Current user's Firebase UID
+  /// [gatewayMAC] - Gateway MAC address
+  ///
+  /// Returns a stream of node lists that updates whenever routing table changes
+  Stream<List<DiscoveredNode>> listenToRoutingTableNodes({
+    required String userUID,
+    required String gatewayMAC,
+  }) {
+    final routingTablePath = 'gateways/$userUID/$gatewayMAC/routing_table';
+
+    return _database.child(routingTablePath).onValue.map((event) {
+      if (event.snapshot.value == null) {
+        return [];
+      }
+
+      final routingData = Map<String, dynamic>.from(
+        event.snapshot.value as Map,
+      );
+
+      if (!routingData.containsKey('nodes')) {
+        return [];
+      }
+
+      final nodesMap = Map<String, dynamic>.from(routingData['nodes'] as Map);
+      final nodes = <DiscoveredNode>[];
+
+      for (final entry in nodesMap.entries) {
+        final nodeData = Map<String, dynamic>.from(entry.value as Map);
+        try {
+          nodes.add(DiscoveredNode.fromMap(nodeData));
+        } catch (e) {
+          debugPrint('⚠️ Failed to parse node ${entry.key}: $e');
+        }
+      }
+
+      return nodes;
+    });
+  }
+
   /// Cancel listening to results
   void dispose() {
     _resultSubscription?.cancel();
@@ -307,4 +395,69 @@ class CommandStatus {
   });
 
   bool get isSuccess => result == 'success';
+}
+
+/// Discovered node from routing table
+class DiscoveredNode {
+  final String address; // e.g., "0xCC64"
+  final String? via; // e.g., "0xFFFF" for direct connection
+  final int metric; // hop count (1 = direct, 2+ = multi-hop)
+  final int rssi; // Received signal strength in dBm (-120 to -30)
+  final double snr; // Signal-to-noise ratio in dB
+  final int role; // Node role bitmask
+  final int? lastSeen; // Timestamp of last connection
+  final bool isDirect; // True if metric == 1 (direct connection)
+
+  DiscoveredNode({
+    required this.address,
+    this.via,
+    required this.metric,
+    required this.rssi,
+    required this.snr,
+    required this.role,
+    this.lastSeen,
+  }) : isDirect = metric == 1;
+
+  /// Parse node from routing table JSON
+  factory DiscoveredNode.fromMap(Map<String, dynamic> map) {
+    return DiscoveredNode(
+      address: map['address'] ?? '0x0000',
+      via: map['via'] ?? '0xFFFF',
+      metric: map['metric'] ?? 0,
+      rssi: (map['rssi'] as num?)?.toInt() ?? 0,
+      snr: (map['snr'] as num?)?.toDouble() ?? 0.0,
+      role: (map['role'] as num?)?.toInt() ?? 0,
+      lastSeen: (map['last_seen'] as num?)?.toInt(),
+    );
+  }
+
+  /// Get signal strength indicator (0-4 bars)
+  int getSignalBars() {
+    if (rssi >= -60) return 4;
+    if (rssi >= -70) return 3;
+    if (rssi >= -80) return 2;
+    if (rssi >= -90) return 1;
+    return 0;
+  }
+
+  /// Get signal quality description
+  String getSignalQuality() {
+    if (rssi >= -60) return 'Excellent';
+    if (rssi >= -70) return 'Good';
+    if (rssi >= -80) return 'Fair';
+    if (rssi >= -90) return 'Weak';
+    return 'Poor';
+  }
+
+  /// Get connection type description
+  String getConnectionType() {
+    if (metric == 1) return 'Direct (1-hop)';
+    return 'Indirect ($metric-hops)';
+  }
+
+  @override
+  String toString() {
+    return 'DiscoveredNode(address=$address, rssi=$rssi dBm, snr=$snr dB, '
+        'metric=$metric, quality=${getSignalQuality()})';
+  }
 }
