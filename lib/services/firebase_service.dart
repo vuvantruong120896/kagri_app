@@ -111,9 +111,27 @@ class FirebaseService {
         }
       });
 
-      // Sort by last seen (newest first)
-      devices.sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
-      return devices;
+      // Separate gateways and nodes, then sort stably
+      final gateways = <Device>[];
+      final nodes = <Device>[];
+
+      for (final device in devices) {
+        if (device.isGateway) {
+          gateways.add(device);
+        } else {
+          nodes.add(device);
+        }
+      }
+
+      // Sort gateways by MAC (stable order)
+      gateways.sort((a, b) => (a.gatewayMAC ?? a.nodeId)
+          .compareTo(b.gatewayMAC ?? b.nodeId));
+
+      // Sort nodes by nodeId (stable order, not by lastSeen)
+      nodes.sort((a, b) => a.nodeId.compareTo(b.nodeId));
+
+      // Combine: gateways first, then nodes
+      return [...gateways, ...nodes];
     });
   }
 

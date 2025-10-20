@@ -228,7 +228,27 @@ class MockDataService {
         );
       }).toList();
 
-      return updatedDevices;
+      // Separate gateways and nodes, then sort stably
+      final gateways = <Device>[];
+      final nodes = <Device>[];
+
+      for (final device in updatedDevices) {
+        if (device.isGateway) {
+          gateways.add(device);
+        } else {
+          nodes.add(device);
+        }
+      }
+
+      // Sort gateways by MAC (stable order)
+      gateways.sort((a, b) => (a.gatewayMAC ?? a.nodeId)
+          .compareTo(b.gatewayMAC ?? b.nodeId));
+
+      // Sort nodes by nodeId (stable order)
+      nodes.sort((a, b) => a.nodeId.compareTo(b.nodeId));
+
+      // Return: gateways first, then nodes
+      return [...gateways, ...nodes];
     });
   }
 }
