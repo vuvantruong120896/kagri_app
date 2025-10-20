@@ -53,30 +53,37 @@ class MockDataService {
       for (final device in devicesToGenerate) {
         final timestamp = now.subtract(Duration(minutes: i * 5));
 
-        // Generate realistic temperature based on time and device
-        double baseTemp = 25.0;
-        if (device.nodeId == '0xCC64') baseTemp = 28.0; // Greenhouse 1 warmer
-        if (device.nodeId == '0x4F70') baseTemp = 26.0; // Greenhouse 2
-        if (device.nodeId == '0x09F8') baseTemp = 22.0; // Outdoor cooler
+        // All devices are now SOIL_SENSOR type
+        const deviceType = 'soil_sensor';
 
-        // Add time-based variation (warmer during day)
+        // Generate soil moisture (20-80%)
+        final baseMoisture = device.nodeId == '0x09F8' ? 30.0 : 55.0;
+        final soilMoisture = baseMoisture + (_random.nextDouble() - 0.5) * 15;
+
+        // Generate soil temperature (15-35°C)
+        double baseTemp = 25.0;
+        if (device.nodeId == '0xCC64') baseTemp = 28.0;
+        if (device.nodeId == '0x4F70') baseTemp = 26.0;
+        if (device.nodeId == '0x09F8') baseTemp = 22.0;
+
         final hour = timestamp.hour;
         double timeVariation = 0;
         if (hour >= 6 && hour <= 18) {
-          timeVariation = 5 * sin((hour - 6) * pi / 12); // Warmer during day
+          timeVariation = 5 * sin((hour - 6) * pi / 12);
         }
-
-        final temperature =
+        final soilTemperature =
             baseTemp + timeVariation + (_random.nextDouble() - 0.5) * 4;
 
-        // Generate humidity (inversely related to temperature somewhat)
-        final baseHumidity = device.nodeId == '0x09F8'
-            ? 45.0
-            : 70.0; // Outdoor lower humidity
-        final humidity =
-            baseHumidity +
-            (_random.nextDouble() - 0.5) * 20 -
-            (temperature - baseTemp) * 0.5;
+        // Generate pH (6.0-7.5 optimal for most plants)
+        final pH = 6.5 + (_random.nextDouble() - 0.5) * 1.0;
+
+        // Generate EC (electrical conductivity) in mS/cm
+        final ec = 1.0 + _random.nextDouble() * 1.5;
+
+        // Generate NPK values (nitrogen, phosphorus, potassium)
+        final nitrogen = 80.0 + _random.nextDouble() * 100;
+        final phosphorus = 40.0 + _random.nextDouble() * 80;
+        final potassium = 150.0 + _random.nextDouble() * 150;
 
         // Generate battery voltage (3.0V to 4.2V)
         final battery = 3.5 + _random.nextDouble() * 0.7;
@@ -92,8 +99,16 @@ class MockDataService {
             id: 'mock_${device.nodeId}_$i',
             nodeId: device.nodeId,
             counter: globalCounter++,
-            temperature: double.parse(temperature.toStringAsFixed(1)),
-            humidity: double.parse(humidity.clamp(0, 100).toStringAsFixed(1)),
+            deviceType: deviceType,
+            soilMoisture: double.parse(
+              soilMoisture.clamp(0, 100).toStringAsFixed(1),
+            ),
+            soilTemperature: double.parse(soilTemperature.toStringAsFixed(1)),
+            pH: double.parse(pH.clamp(0, 14).toStringAsFixed(2)),
+            ec: double.parse(ec.toStringAsFixed(2)),
+            nitrogen: double.parse(nitrogen.toStringAsFixed(1)),
+            phosphorus: double.parse(phosphorus.toStringAsFixed(1)),
+            potassium: double.parse(potassium.toStringAsFixed(1)),
             battery: double.parse(battery.toStringAsFixed(2)),
             timestamp: timestamp,
             rssi: rssi,
@@ -133,30 +148,36 @@ class MockDataService {
 
     // Generate ONE latest record per device - ALWAYS include all devices
     for (final device in devicesToGenerate) {
-      // Generate realistic temperature based on time and device
-      double baseTemp = 25.0;
-      if (device.nodeId == '0xCC64') baseTemp = 28.0; // Greenhouse 1 warmer
-      if (device.nodeId == '0x4F70') baseTemp = 26.0; // Greenhouse 2
-      if (device.nodeId == '0x09F8') baseTemp = 22.0; // Outdoor cooler
+      const deviceType = 'soil_sensor';
 
-      // Add time-based variation (warmer during day)
+      // Generate soil moisture (20-80%)
+      final baseMoisture = device.nodeId == '0x09F8' ? 30.0 : 55.0;
+      final soilMoisture = baseMoisture + (_random.nextDouble() - 0.5) * 15;
+
+      // Generate soil temperature (15-35°C)
+      double baseTemp = 25.0;
+      if (device.nodeId == '0xCC64') baseTemp = 28.0;
+      if (device.nodeId == '0x4F70') baseTemp = 26.0;
+      if (device.nodeId == '0x09F8') baseTemp = 22.0;
+
       final hour = now.hour;
       double timeVariation = 0;
       if (hour >= 6 && hour <= 18) {
-        timeVariation = 5 * sin((hour - 6) * pi / 12); // Warmer during day
+        timeVariation = 5 * sin((hour - 6) * pi / 12);
       }
-
-      final temperature =
+      final soilTemperature =
           baseTemp + timeVariation + (_random.nextDouble() - 0.5) * 4;
 
-      // Generate humidity (inversely related to temperature somewhat)
-      final baseHumidity = device.nodeId == '0x09F8'
-          ? 45.0
-          : 70.0; // Outdoor lower humidity
-      final humidity =
-          baseHumidity +
-          (_random.nextDouble() - 0.5) * 20 -
-          (temperature - baseTemp) * 0.5;
+      // Generate pH (6.0-7.5)
+      final pH = 6.5 + (_random.nextDouble() - 0.5) * 1.0;
+
+      // Generate EC (electrical conductivity)
+      final ec = 1.0 + _random.nextDouble() * 1.5;
+
+      // Generate NPK
+      final nitrogen = 80.0 + _random.nextDouble() * 100;
+      final phosphorus = 40.0 + _random.nextDouble() * 80;
+      final potassium = 150.0 + _random.nextDouble() * 150;
 
       // Generate battery voltage (3.0V to 4.2V)
       final battery = 3.5 + _random.nextDouble() * 0.7;
@@ -172,8 +193,16 @@ class MockDataService {
           id: 'mock_${device.nodeId}_latest',
           nodeId: device.nodeId,
           counter: baseCounter++,
-          temperature: double.parse(temperature.toStringAsFixed(1)),
-          humidity: double.parse(humidity.clamp(0, 100).toStringAsFixed(1)),
+          deviceType: deviceType,
+          soilMoisture: double.parse(
+            soilMoisture.clamp(0, 100).toStringAsFixed(1),
+          ),
+          soilTemperature: double.parse(soilTemperature.toStringAsFixed(1)),
+          pH: double.parse(pH.clamp(0, 14).toStringAsFixed(2)),
+          ec: double.parse(ec.toStringAsFixed(2)),
+          nitrogen: double.parse(nitrogen.toStringAsFixed(1)),
+          phosphorus: double.parse(phosphorus.toStringAsFixed(1)),
+          potassium: double.parse(potassium.toStringAsFixed(1)),
           battery: double.parse(battery.toStringAsFixed(2)),
           timestamp: now,
           rssi: rssi,

@@ -79,7 +79,9 @@ class _DeviceChartScreenState extends State<DeviceChartScreen> {
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
+                  runSpacing: 8,
                   children: [
+                    // Basic metrics
                     _buildMetricChip(
                       'temperature',
                       'Nhiệt độ',
@@ -88,6 +90,12 @@ class _DeviceChartScreenState extends State<DeviceChartScreen> {
                     _buildMetricChip('humidity', 'Độ ẩm', Icons.water_drop),
                     _buildMetricChip('battery', 'Pin', Icons.battery_full),
                     _buildMetricChip('rssi', 'RSSI', Icons.signal_cellular_alt),
+                    // Soil sensor specific metrics
+                    _buildMetricChip('pH', 'pH', Icons.science),
+                    _buildMetricChip('ec', 'EC', Icons.electric_bolt),
+                    _buildMetricChip('nitrogen', 'Nitơ (N)', Icons.grass),
+                    _buildMetricChip('phosphorus', 'Phospho (P)', Icons.spa),
+                    _buildMetricChip('potassium', 'Kali (K)', Icons.eco),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -281,13 +289,27 @@ class _DeviceChartScreenState extends State<DeviceChartScreen> {
     double getValue(SensorData d) {
       switch (_selectedMetric) {
         case 'temperature':
-          return d.temperature;
+          return d.deviceType == 'soil_sensor'
+              ? (d.soilTemperature ?? 0)
+              : (d.temperature ?? 0);
         case 'humidity':
-          return d.humidity;
+          return d.deviceType == 'soil_sensor'
+              ? (d.soilMoisture ?? 0)
+              : (d.humidity ?? 0);
         case 'battery':
           return d.battery;
         case 'rssi':
           return d.rssi?.toDouble() ?? 0;
+        case 'pH':
+          return d.pH ?? 0;
+        case 'ec':
+          return d.ec ?? 0;
+        case 'nitrogen':
+          return d.nitrogen ?? 0;
+        case 'phosphorus':
+          return d.phosphorus ?? 0;
+        case 'potassium':
+          return d.potassium ?? 0;
         default:
           return 0;
       }
@@ -312,6 +334,17 @@ class _DeviceChartScreenState extends State<DeviceChartScreen> {
         break;
       case 'rssi':
         unit = ' dBm';
+        break;
+      case 'pH':
+        unit = '';
+        break;
+      case 'ec':
+        unit = ' mS/cm';
+        break;
+      case 'nitrogen':
+      case 'phosphorus':
+      case 'potassium':
+        unit = ' mg/kg';
         break;
     }
 
@@ -373,16 +406,35 @@ class _DeviceChartScreenState extends State<DeviceChartScreen> {
 
       switch (_selectedMetric) {
         case 'temperature':
-          value = d.temperature;
+          value = d.deviceType == 'soil_sensor'
+              ? (d.soilTemperature ?? 0)
+              : (d.temperature ?? 0);
           break;
         case 'humidity':
-          value = d.humidity;
+          value = d.deviceType == 'soil_sensor'
+              ? (d.soilMoisture ?? 0)
+              : (d.humidity ?? 0);
           break;
         case 'battery':
           value = d.battery;
           break;
         case 'rssi':
           value = d.rssi?.toDouble() ?? 0;
+          break;
+        case 'pH':
+          value = d.pH ?? 0;
+          break;
+        case 'ec':
+          value = d.ec ?? 0;
+          break;
+        case 'nitrogen':
+          value = d.nitrogen ?? 0;
+          break;
+        case 'phosphorus':
+          value = d.phosphorus ?? 0;
+          break;
+        case 'potassium':
+          value = d.potassium ?? 0;
           break;
         default:
           value = 0;
@@ -456,6 +508,26 @@ class _DeviceChartScreenState extends State<DeviceChartScreen> {
       case 'rssi':
         lineColor = AppColors.primary;
         yAxisLabel = 'dBm';
+        break;
+      case 'pH':
+        lineColor = const Color(0xFF9C27B0); // Purple
+        yAxisLabel = 'pH';
+        break;
+      case 'ec':
+        lineColor = const Color(0xFFFF9800); // Orange
+        yAxisLabel = 'mS/cm';
+        break;
+      case 'nitrogen':
+        lineColor = const Color(0xFF4CAF50); // Green
+        yAxisLabel = 'mg/kg';
+        break;
+      case 'phosphorus':
+        lineColor = const Color(0xFF2196F3); // Blue
+        yAxisLabel = 'mg/kg';
+        break;
+      case 'potassium':
+        lineColor = const Color(0xFF795548); // Brown
+        yAxisLabel = 'mg/kg';
         break;
       default:
         lineColor = AppColors.primary;

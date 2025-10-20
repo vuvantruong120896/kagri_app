@@ -12,6 +12,13 @@ import 'gateway_selection_screen.dart';
 import 'settings_screen.dart';
 import 'login_screen.dart';
 import 'device_chart_screen.dart';
+// ignore: unused_import
+import '../widgets/loading_skeleton.dart';
+// ignore: unused_import
+import '../widgets/empty_state.dart';
+// ignore: unused_import
+import '../widgets/error_dialog.dart';
+import '../widgets/soil_metrics_display.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -403,7 +410,7 @@ class _HomeScreenState extends State<HomeScreen>
                             child: Icon(
                               Icons.sync,
                               size: 64,
-                              color: Colors.blue.withOpacity(0.7),
+                              color: Colors.blue.withValues(alpha: 0.7),
                             ),
                           ),
                           const SizedBox(height: AppSizes.paddingMedium),
@@ -813,6 +820,67 @@ class _HomeScreenState extends State<HomeScreen>
 
                   final latestData = snapshot.data!.first;
 
+                  // If it's a soil sensor, use the new Soil Metrics Display widget
+                  if (latestData.deviceType == 'soil_sensor') {
+                    return Column(
+                      children: [
+                        SoilMetricsDisplay(
+                          sensorData: latestData,
+                          isCompact: true,
+                        ),
+                        const SizedBox(height: AppSizes.paddingSmall),
+                        // Battery and Signal info
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildSensorValue(
+                                latestData.isBatteryLow
+                                    ? Icons.battery_alert
+                                    : Icons.battery_full,
+                                'Pin',
+                                '${latestData.battery.toStringAsFixed(2)}V (${latestData.batteryPercentage.toStringAsFixed(0)}%)',
+                                latestData.isBatteryLow
+                                    ? AppColors.danger
+                                    : AppColors.online,
+                              ),
+                            ),
+                            if (latestData.rssi != null) ...[
+                              const SizedBox(width: AppSizes.paddingMedium),
+                              Expanded(
+                                child: _buildSensorValue(
+                                  Icons.signal_cellular_alt,
+                                  'RSSI',
+                                  '${latestData.rssi} dBm',
+                                  latestData.isSignalWeak
+                                      ? AppColors.danger
+                                      : AppColors.online,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: AppSizes.paddingSmall),
+                        // Counter and timestamp
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Counter: ${latestData.counter}',
+                              style: AppTextStyles.caption,
+                            ),
+                            Text(
+                              DateFormat(
+                                'HH:mm:ss',
+                              ).format(latestData.timestamp),
+                              style: AppTextStyles.caption,
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  }
+
+                  // For other sensor types (environment, water, etc.), show default view
                   return Column(
                     children: [
                       // Temperature and Humidity
@@ -822,7 +890,7 @@ class _HomeScreenState extends State<HomeScreen>
                             child: _buildSensorValue(
                               Icons.thermostat,
                               'Nhiệt độ',
-                              '${latestData.temperature.toStringAsFixed(1)}°C',
+                              '${latestData.temperature?.toStringAsFixed(1) ?? "N/A"}°C',
                               AppColors.temperatureNormal,
                             ),
                           ),
@@ -831,7 +899,7 @@ class _HomeScreenState extends State<HomeScreen>
                             child: _buildSensorValue(
                               Icons.water_drop,
                               'Độ ẩm',
-                              '${latestData.humidity.toStringAsFixed(1)}%',
+                              '${latestData.humidity?.toStringAsFixed(1) ?? "N/A"}%',
                               AppColors.humidityNormal,
                             ),
                           ),
@@ -1113,78 +1181,85 @@ class _HomeScreenState extends State<HomeScreen>
                             ),
                             subtitle: Text(
                               'Counter: ${data.counter} | '
-                              'Temp: ${data.temperature.toStringAsFixed(1)}°C | '
-                              'Hum: ${data.humidity.toStringAsFixed(1)}%',
+                              'Temp: ${data.deviceType == 'soil_sensor' ? (data.soilTemperature?.toStringAsFixed(1) ?? "N/A") : (data.temperature?.toStringAsFixed(1) ?? "N/A")}°C | '
+                              'Hum: ${data.deviceType == 'soil_sensor' ? (data.soilMoisture?.toStringAsFixed(1) ?? "N/A") : (data.humidity?.toStringAsFixed(1) ?? "N/A")}%',
                               style: AppTextStyles.caption,
                             ),
                             children: [
                               Padding(
                                 padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: _buildDetailValue(
-                                            Icons.thermostat,
-                                            'Nhiệt độ',
-                                            '${data.temperature.toStringAsFixed(1)}°C',
-                                            AppColors.temperatureNormal,
+                                child: data.deviceType == 'soil_sensor'
+                                    ? SoilMetricsDisplay(
+                                        sensorData: data,
+                                        isCompact: false,
+                                      )
+                                    : Column(
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: _buildDetailValue(
+                                                  Icons.thermostat,
+                                                  'Nhiệt độ',
+                                                  '${data.temperature?.toStringAsFixed(1) ?? "N/A"}°C',
+                                                  AppColors.temperatureNormal,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: _buildDetailValue(
+                                                  Icons.water_drop,
+                                                  'Độ ẩm',
+                                                  '${data.humidity?.toStringAsFixed(1) ?? "N/A"}%',
+                                                  AppColors.humidityNormal,
+                                                ),
+                                              ),
+                                            ],
                                           ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: _buildDetailValue(
-                                            Icons.water_drop,
-                                            'Độ ẩm',
-                                            '${data.humidity.toStringAsFixed(1)}%',
-                                            AppColors.humidityNormal,
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: _buildDetailValue(
+                                                  data.isBatteryLow
+                                                      ? Icons.battery_alert
+                                                      : Icons.battery_full,
+                                                  'Pin',
+                                                  '${data.battery.toStringAsFixed(2)}V\n${data.batteryPercentage.toStringAsFixed(0)}%',
+                                                  data.isBatteryLow
+                                                      ? AppColors.danger
+                                                      : AppColors.online,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              if (data.rssi != null)
+                                                Expanded(
+                                                  child: _buildDetailValue(
+                                                    Icons.signal_cellular_alt,
+                                                    'RSSI',
+                                                    '${data.rssi} dBm',
+                                                    data.isSignalWeak
+                                                        ? AppColors.danger
+                                                        : AppColors.online,
+                                                  ),
+                                                )
+                                              else
+                                                const Expanded(
+                                                  child: SizedBox(),
+                                                ),
+                                            ],
                                           ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: _buildDetailValue(
-                                            data.isBatteryLow
-                                                ? Icons.battery_alert
-                                                : Icons.battery_full,
-                                            'Pin',
-                                            '${data.battery.toStringAsFixed(2)}V\n${data.batteryPercentage.toStringAsFixed(0)}%',
-                                            data.isBatteryLow
-                                                ? AppColors.danger
-                                                : AppColors.online,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        if (data.rssi != null)
-                                          Expanded(
-                                            child: _buildDetailValue(
-                                              Icons.signal_cellular_alt,
-                                              'RSSI',
-                                              '${data.rssi} dBm',
-                                              data.isSignalWeak
-                                                  ? AppColors.danger
-                                                  : AppColors.online,
+                                          if (data.snr != null) ...[
+                                            const SizedBox(height: 8),
+                                            _buildDetailValue(
+                                              Icons.network_check,
+                                              'SNR',
+                                              '${data.snr!.toStringAsFixed(1)} dB',
+                                              AppColors.primary,
                                             ),
-                                          )
-                                        else
-                                          const Expanded(child: SizedBox()),
-                                      ],
-                                    ),
-                                    if (data.snr != null) ...[
-                                      const SizedBox(height: 8),
-                                      _buildDetailValue(
-                                        Icons.network_check,
-                                        'SNR',
-                                        '${data.snr!.toStringAsFixed(1)} dB',
-                                        AppColors.primary,
+                                          ],
+                                        ],
                                       ),
-                                    ],
-                                  ],
-                                ),
                               ),
                             ],
                           ),
