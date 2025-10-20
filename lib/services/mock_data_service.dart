@@ -241,8 +241,10 @@ class MockDataService {
       }
 
       // Sort gateways by MAC (stable order)
-      gateways.sort((a, b) => (a.gatewayMAC ?? a.nodeId)
-          .compareTo(b.gatewayMAC ?? b.nodeId));
+      gateways.sort(
+        (a, b) =>
+            (a.gatewayMAC ?? a.nodeId).compareTo(b.gatewayMAC ?? b.nodeId),
+      );
 
       // Sort nodes by nodeId (stable order)
       nodes.sort((a, b) => a.nodeId.compareTo(b.nodeId));
