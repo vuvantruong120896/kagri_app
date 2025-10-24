@@ -85,6 +85,9 @@ class GatewayStatus {
   /// Free heap in MB
   double get freeHeapMB => freeHeap / 1024 / 1024;
 
+  /// Free heap in KB
+  double get freeHeapKB => freeHeap / 1024;
+
   /// Check if gateway is healthy
   bool get isHealthy {
     return wifiConnected &&

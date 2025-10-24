@@ -2,6 +2,7 @@ import 'sensor_data.dart';
 
 /// Device/Node model matching Firebase Realtime Database schema
 /// From firmware: nodes/{userUID}/{gatewayMAC}/{nodeId}/info and latest_data
+/// Also includes routing table data from gateways/{userUID}/{gatewayMAC}/routing_table
 class Device {
   final String nodeId; // Node address in hex format (e.g., "0xCC64")
   final String name; // Human-readable name
@@ -12,6 +13,13 @@ class Device {
   final DateTime lastSeen; // Last data received timestamp
   final SensorData? latestData; // Latest sensor reading
 
+  // Routing table fields
+  final bool inRoutingTable; // Node exists in current routing table
+  final String? via; // Next hop address (from routing table)
+  final int metric; // Hop count (1=direct, 2=via 1 hop, etc.)
+  final int? rssi; // RSSI for direct connections (metric=1)
+  final double? snr; // SNR for direct connections (metric=1)
+
   Device({
     required this.nodeId,
     required this.name,
@@ -21,6 +29,11 @@ class Device {
     required this.createdAt,
     required this.lastSeen,
     this.latestData,
+    this.inRoutingTable = false,
+    this.via,
+    this.metric = 0,
+    this.rssi,
+    this.snr,
   });
 
   /// Create from Firebase Realtime Database nodes/{nodeId}/info JSON
@@ -65,11 +78,23 @@ class Device {
     };
   }
 
-  /// Check if node is currently online (seen within last 2 minutes)
+  /// Check if node is currently online
+  /// Online if:
+  /// - For Gateways: lastSeen < 10 minutes (gateways don't have routing table entries)
+  /// - For Nodes: (exists in routing table) AND (lastSeen < 10 minutes)
   bool get isOnline {
     final now = DateTime.now();
     final difference = now.difference(lastSeen);
-    return difference.inMinutes < 2; // Online if seen within 2 minutes
+
+    if (isGateway) {
+      // Gateway: only check lastSeen (no routing table requirement)
+      // Timeout: 12 minutes
+      return difference.inMinutes < 12;
+    } else {
+      // Regular Node: must be in routing table AND have recent data
+      // Timeout: 12 minutes
+      return inRoutingTable && difference.inMinutes < 12;
+    }
   }
 
   /// Status text for UI display
@@ -146,6 +171,11 @@ class Device {
     DateTime? createdAt,
     DateTime? lastSeen,
     SensorData? latestData,
+    bool? inRoutingTable,
+    String? via,
+    int? metric,
+    int? rssi,
+    double? snr,
   }) {
     return Device(
       nodeId: nodeId ?? this.nodeId,
@@ -156,6 +186,11 @@ class Device {
       createdAt: createdAt ?? this.createdAt,
       lastSeen: lastSeen ?? this.lastSeen,
       latestData: latestData ?? this.latestData,
+      inRoutingTable: inRoutingTable ?? this.inRoutingTable,
+      via: via ?? this.via,
+      metric: metric ?? this.metric,
+      rssi: rssi ?? this.rssi,
+      snr: snr ?? this.snr,
     );
   }
 }

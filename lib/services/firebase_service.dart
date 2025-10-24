@@ -60,81 +60,237 @@ class FirebaseService {
     }
 
     final nodesRef = database.ref('$nodesPath/$userUID');
+    final gatewaysRef = database.ref('$gatewaysPath/$userUID');
 
-    return nodesRef.onValue.map((event) {
-      if (event.snapshot.value == null) return <Device>[];
+    // Listen to nodes stream and combine with routing tables + gateway status
+    return nodesRef.onValue.asyncMap((nodesEvent) async {
+      try {
+        // For each nodes event, fetch latest gateways and routing tables
+        final gatewaysSnapshot = await gatewaysRef.get();
 
-      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-      final List<Device> devices = [];
-
-      // Iterate through gateways
-      data.forEach((gatewayMAC, gatewayData) {
-        if (gatewayData is Map) {
-          final gatewayMap = Map<String, dynamic>.from(gatewayData);
-
-          // Iterate through nodes under this gateway
-          gatewayMap.forEach((nodeId, nodeData) {
-            if (nodeData is Map) {
-              final nodeMap = Map<String, dynamic>.from(nodeData);
-
-              // Merge info and latest_data
-              final info = nodeMap['info'] != null
-                  ? Map<String, dynamic>.from(nodeMap['info'] as Map)
-                  : <String, dynamic>{};
-
-              // Add gateway MAC to device info
-              info['gatewayMAC'] = gatewayMAC;
-
-              // Create device with info
-              final device = Device.fromJson(info, nodeId: nodeId);
-
-              // Attach latest data if available
-              if (nodeMap['latest_data'] != null) {
-                final latestDataMap = Map<String, dynamic>.from(
-                  nodeMap['latest_data'] as Map,
-                );
-                final latestData = SensorData.fromJson(
-                  latestDataMap,
-                  nodeId: nodeId,
-                );
-                devices.add(
-                  device.copyWith(
-                    latestData: latestData,
-                    lastSeen: latestData.timestamp,
-                  ),
-                );
-              } else {
-                devices.add(device);
-              }
-            }
-          });
+        if (gatewaysSnapshot.value == null) {
+          return _buildDevicesFromNodes(nodesEvent, {}, {});
         }
-      });
 
-      // Separate gateways and nodes, then sort stably
-      final gateways = <Device>[];
-      final nodes = <Device>[];
+        final gatewaysData = Map<String, dynamic>.from(
+          gatewaysSnapshot.value as Map,
+        );
 
-      for (final device in devices) {
-        if (device.isGateway) {
-          gateways.add(device);
-        } else {
-          nodes.add(device);
+        // Fetch all routing tables and gateway status for each gateway concurrently
+        final routingTableFutures = <String, Future<RoutingTable?>>{};
+        final gatewayStatusFutures = <String, Future<GatewayStatus?>>{};
+
+        for (final gatewayMAC in gatewaysData.keys) {
+          routingTableFutures[gatewayMAC] = database
+              .ref('$gatewaysPath/$userUID/$gatewayMAC/routing_table')
+              .get()
+              .then((snapshot) {
+                if (snapshot.value == null) return null;
+                final data = Map<String, dynamic>.from(snapshot.value as Map);
+                return RoutingTable.fromJson(data);
+              })
+              .catchError((_) => null as RoutingTable?);
+
+          gatewayStatusFutures[gatewayMAC] = database
+              .ref('$gatewaysPath/$userUID/$gatewayMAC/status')
+              .get()
+              .then((snapshot) {
+                if (snapshot.value == null) return null;
+                final data = Map<String, dynamic>.from(snapshot.value as Map);
+                return GatewayStatus.fromJson(data, gatewayId: gatewayMAC);
+              })
+              .catchError((_) => null as GatewayStatus?);
+        }
+
+        // Wait for all routing tables and gateway status to load
+        final routingTables = <String, RoutingTable?>{};
+        final gatewayStatuses = <String, GatewayStatus?>{};
+
+        for (final entry in routingTableFutures.entries) {
+          routingTables[entry.key] = await entry.value;
+        }
+
+        for (final entry in gatewayStatusFutures.entries) {
+          gatewayStatuses[entry.key] = await entry.value;
+        }
+
+        return _buildDevicesFromNodes(
+          nodesEvent,
+          routingTables,
+          gatewayStatuses,
+        );
+      } catch (e) {
+        print('Error fetching gateways and routing tables: $e');
+        return _buildDevicesFromNodes(nodesEvent, {}, {});
+      }
+    });
+  }
+
+  /// Build devices from nodes data, merging with routing table info and gateway status
+  /// IMPORTANT: Includes nodes from routing table even if they don't have entries in nodes/
+  /// Also includes gateways from gateway status
+  List<Device> _buildDevicesFromNodes(
+    DatabaseEvent event,
+    Map<String, RoutingTable?> routingTables,
+    Map<String, GatewayStatus?> gatewayStatuses,
+  ) {
+    final data = event.snapshot.value != null
+        ? Map<String, dynamic>.from(event.snapshot.value as Map)
+        : <String, dynamic>{};
+
+    final List<Device> devices = [];
+    final processedNodeIds =
+        <String, Set<String>>{}; // Track processed nodes per gateway
+
+    // Step 1: Process nodes from nodes/ path (these have info/latest_data)
+    data.forEach((gatewayMAC, gatewayData) {
+      if (gatewayData is Map) {
+        final gatewayMap = Map<String, dynamic>.from(gatewayData);
+        final routingTable = routingTables[gatewayMAC];
+        processedNodeIds[gatewayMAC] = {};
+
+        // Iterate through nodes under this gateway
+        gatewayMap.forEach((nodeId, nodeData) {
+          if (nodeData is Map) {
+            final nodeMap = Map<String, dynamic>.from(nodeData);
+
+            // Merge info and latest_data
+            final info = nodeMap['info'] != null
+                ? Map<String, dynamic>.from(nodeMap['info'] as Map)
+                : <String, dynamic>{};
+
+            // Add gateway MAC to device info
+            info['gatewayMAC'] = gatewayMAC;
+
+            // Create device with info
+            var device = Device.fromJson(info, nodeId: nodeId);
+
+            // Check if node is in routing table
+            final inRoutingTable =
+                routingTable?.nodes.containsKey(nodeId) ?? false;
+            final routeNode = inRoutingTable
+                ? routingTable!.nodes[nodeId]
+                : null;
+
+            // Attach latest data if available + routing table info
+            if (nodeMap['latest_data'] != null) {
+              final latestDataMap = Map<String, dynamic>.from(
+                nodeMap['latest_data'] as Map,
+              );
+              final latestData = SensorData.fromJson(
+                latestDataMap,
+                nodeId: nodeId,
+              );
+              device = device.copyWith(
+                latestData: latestData,
+                lastSeen: latestData.timestamp,
+                inRoutingTable: inRoutingTable,
+                via: routeNode?.via,
+                metric: routeNode?.metric ?? 0,
+                rssi: routeNode?.rssi,
+                snr: routeNode?.snr,
+              );
+            } else {
+              // No latest data, but still update routing table info
+              device = device.copyWith(
+                inRoutingTable: inRoutingTable,
+                via: routeNode?.via,
+                metric: routeNode?.metric ?? 0,
+                rssi: routeNode?.rssi,
+                snr: routeNode?.snr,
+              );
+            }
+
+            devices.add(device);
+            processedNodeIds[gatewayMAC]!.add(nodeId);
+          }
+        });
+      }
+    });
+
+    // Step 2: Add nodes from routing table that are NOT in nodes/ path
+    routingTables.forEach((gatewayMAC, routingTable) {
+      if (routingTable != null) {
+        final processedSet = processedNodeIds[gatewayMAC] ?? {};
+
+        // For each node in routing table
+        routingTable.nodes.forEach((nodeId, routeNode) {
+          // Skip if already processed
+          if (processedSet.contains(nodeId)) {
+            return;
+          }
+
+          // Create a device from routing table entry only
+          // Use routing table timestamp as lastSeen since we don't have actual data timestamp
+          final device = Device(
+            nodeId: nodeId,
+            name:
+                'Node ${nodeId.substring(2)}', // e.g., "Node CC64" from "0xCC64"
+            type: 'sensor',
+            gatewayMAC: gatewayMAC,
+            createdAt: routingTable.timestamp,
+            lastSeen: routingTable.timestamp, // Use routing table timestamp
+            inRoutingTable: true,
+            via: routeNode.via,
+            metric: routeNode.metric,
+            rssi: routeNode.rssi,
+            snr: routeNode.snr,
+          );
+
+          devices.add(device);
+        });
+      }
+    });
+
+    // Step 3: Add gateways from gateway status that are not already in devices
+    gatewayStatuses.forEach((gatewayMAC, gatewayStatus) {
+      if (gatewayStatus != null) {
+        // Check if this gateway is already in devices (from nodes path)
+        final gatewayExists = devices.any(
+          (d) =>
+              d.isGateway &&
+              (d.nodeId == gatewayMAC || d.gatewayMAC == gatewayMAC),
+        );
+
+        if (!gatewayExists) {
+          // Create a device from gateway status only
+          // Use status timestamp as lastSeen
+          final device = Device(
+            nodeId: gatewayMAC, // Gateway nodeId is its MAC address
+            name: 'Gateway',
+            type: 'gateway',
+            gatewayMAC: gatewayMAC,
+            createdAt: gatewayStatus.timestamp,
+            lastSeen: gatewayStatus.timestamp,
+          );
+
+          devices.add(device);
         }
       }
-
-      // Sort gateways by MAC (stable order)
-      gateways.sort(
-        (a, b) =>
-            (a.gatewayMAC ?? a.nodeId).compareTo(b.gatewayMAC ?? b.nodeId),
-      );
-
-      // Sort nodes by nodeId (stable order, not by lastSeen)
-      nodes.sort((a, b) => a.nodeId.compareTo(b.nodeId));
-
-      // Combine: gateways first, then nodes
-      return [...gateways, ...nodes];
     });
+
+    // Step 4: Separate gateways and nodes, then sort stably
+    final gateways = <Device>[];
+    final nodes = <Device>[];
+
+    for (final device in devices) {
+      if (device.isGateway) {
+        gateways.add(device);
+      } else {
+        nodes.add(device);
+      }
+    }
+
+    // Sort gateways by MAC (stable order)
+    gateways.sort(
+      (a, b) => (a.gatewayMAC ?? a.nodeId).compareTo(b.gatewayMAC ?? b.nodeId),
+    );
+
+    // Sort nodes by nodeId (stable order)
+    nodes.sort((a, b) => a.nodeId.compareTo(b.nodeId));
+
+    // Combine: gateways first, then nodes
+    return [...gateways, ...nodes];
   }
 
   /// Get stream of latest sensor data for a specific node

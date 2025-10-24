@@ -136,7 +136,7 @@ class _NetworkStatusScreenState extends State<NetworkStatusScreen> {
                         _buildStatusRow('Uptime', status.uptimeText),
                         _buildStatusRow(
                           'Free Heap',
-                          '${status.freeHeapMB.toStringAsFixed(2)} MB',
+                          '${status.freeHeapKB.toStringAsFixed(2)} KB',
                         ),
                       ],
                     ),

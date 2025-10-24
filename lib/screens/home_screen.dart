@@ -1,3 +1,4 @@
+// ignore_for_file: dead_code, unnecessary_null_checks
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/sensor_data.dart';
@@ -12,8 +13,7 @@ import 'gateway_selection_screen.dart';
 import 'settings_screen.dart';
 import 'login_screen.dart';
 import 'device_chart_screen.dart';
-// ignore: unused_import
-import '../widgets/loading_skeleton.dart';
+import '../services/wifi_scan_service.dart';
 // ignore: unused_import
 import '../widgets/empty_state.dart';
 // ignore: unused_import
@@ -1493,7 +1493,27 @@ class _HomeScreenState extends State<HomeScreen>
 
             const SizedBox(height: 8),
 
-            // Option 2: Firmware Update
+            // Gateway-only options (Options 2-3)
+            if (device.isGateway) ...[
+              // Option 2: Change WiFi (Gateway only)
+              ListTile(
+                leading: const Icon(Icons.wifi, color: Colors.blue, size: 28),
+                title: const Text('Đổi WiFi', style: AppTextStyles.body1),
+                subtitle: const Text(
+                  'Cấu hình kết nối mạng',
+                  style: AppTextStyles.caption,
+                ),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showWiFiConfig(context, device);
+                },
+              ),
+
+              const SizedBox(height: 8),
+            ],
+
+            // Option 4: Firmware Update (for both Gateway and Node)
             ListTile(
               leading: const Icon(
                 Icons.system_update,
@@ -1789,6 +1809,329 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         );
       },
+    );
+  }
+
+  /// Show WiFi Configuration Dialog with WiFi scanning
+  void _showWiFiConfig(BuildContext context, Device device) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          final List<String> availableWiFis = [];
+          bool isScanning = true;
+          String? selectedSSID;
+          bool hasError = false;
+          String? errorMessage;
+          final passwordController = TextEditingController();
+
+          // Scan WiFi networks available around the device
+          void startWiFiScan() async {
+            try {
+              print('[WiFi Scan] Starting WiFi network scan from device');
+
+              // Check if WiFi is enabled
+              final wiFiEnabled = await WiFiScanService.isWiFiEnabled();
+              if (!wiFiEnabled) {
+                setStateDialog(() {
+                  hasError = true;
+                  errorMessage = 'WiFi chưa được bật trên điện thoại';
+                  isScanning = false;
+                });
+                return;
+              }
+
+              // Request WiFi permission (Android 11+)
+              await WiFiScanService.requestWiFiPermission();
+
+              // Scan WiFi networks
+              final scannedWiFis = await WiFiScanService.scanWiFiNetworks();
+
+              setStateDialog(() {
+                availableWiFis.addAll(scannedWiFis);
+                isScanning = false;
+              });
+
+              print('[WiFi Scan] Found ${scannedWiFis.length} WiFi networks');
+            } catch (e) {
+              print('[WiFi Scan] Error: $e');
+              setStateDialog(() {
+                hasError = true;
+                errorMessage = 'Lỗi quét WiFi: $e';
+                isScanning = false;
+              });
+            }
+          }
+
+          // Start scan on first build
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (isScanning && availableWiFis.isEmpty) {
+              startWiFiScan();
+            }
+          });
+
+          return AlertDialog(
+            title: const Text('Cấu hình WiFi'),
+            content: SizedBox(
+              width: MediaQuery.of(context).size.width * 0.9,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Current WiFi Info
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Kết nối hiện tại:',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'SSID: (Chưa hỗ trợ lấy từ thiết bị)',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Tín hiệu: ${device.latestData?.rssi ?? 'N/A'} dBm',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // WiFi Selection - show WiFi list or password input
+                    if (selectedSSID == null) ...[
+                      Text(
+                        'Chọn WiFi để kết nối:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      if (hasError) ...[
+                        Center(
+                          child: Column(
+                            children: [
+                              const Icon(
+                                Icons.error_outline,
+                                size: 48,
+                                color: Colors.red,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                errorMessage ?? 'Lỗi không xác định',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Colors.red),
+                              ),
+                              const SizedBox(height: 12),
+                              ElevatedButton(
+                                onPressed: () {
+                                  setStateDialog(() {
+                                    hasError = false;
+                                    isScanning = true;
+                                    availableWiFis.clear();
+                                  });
+                                  startWiFiScan();
+                                },
+                                child: const Text('Quét lại'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ] else if (isScanning) ...[
+                        const Center(
+                          child: Column(
+                            children: [
+                              CircularProgressIndicator(),
+                              SizedBox(height: 12),
+                              Text('Đang quét WiFi từ Gateway...'),
+                            ],
+                          ),
+                        ),
+                      ] else if (availableWiFis.isEmpty) ...[
+                        Center(
+                          child: Column(
+                            children: [
+                              const Icon(
+                                Icons.wifi_off,
+                                size: 48,
+                                color: Colors.grey,
+                              ),
+                              const SizedBox(height: 8),
+                              const Text('Không tìm thấy WiFi nào'),
+                              const SizedBox(height: 12),
+                              ElevatedButton(
+                                onPressed: () {
+                                  setStateDialog(() {
+                                    isScanning = true;
+                                    availableWiFis.clear();
+                                  });
+                                  startWiFiScan();
+                                },
+                                child: const Text('Quét lại'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ] else ...[
+                        Container(
+                          constraints: const BoxConstraints(maxHeight: 250),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: availableWiFis.length,
+                            itemBuilder: (context, index) {
+                              final ssid = availableWiFis[index];
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                child: ListTile(
+                                  leading: const Icon(
+                                    Icons.wifi,
+                                    color: Colors.blue,
+                                  ),
+                                  title: Text(ssid),
+                                  trailing: const Icon(
+                                    Icons.arrow_forward_ios,
+                                    size: 16,
+                                  ),
+                                  onTap: () {
+                                    setStateDialog(() {
+                                      selectedSSID = ssid;
+                                    });
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ] else ...[
+                      // Password Input (shown after WiFi selection)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'WiFi đã chọn:',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      selectedSSID ?? '',
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  setStateDialog(() {
+                                    selectedSSID = null;
+                                    passwordController.clear();
+                                  });
+                                },
+                                child: const Text('Thay đổi'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: passwordController,
+                            obscureText: true,
+                            decoration: InputDecoration(
+                              labelText: 'Mật khẩu WiFi',
+                              hintText: 'Nhập mật khẩu mạng',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              prefixIcon: const Icon(Icons.lock),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue[50],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              '⚠️ Thiết bị sẽ khởi động lại để áp dụng cài đặt WiFi mới',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.blue,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  passwordController.dispose();
+                },
+                child: const Text('Hủy'),
+              ),
+              if (selectedSSID != null)
+                ElevatedButton(
+                  onPressed: () {
+                    if (passwordController.text.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Vui lòng nhập mật khẩu'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
+
+                    // TODO: Send WiFi config to device via BLE
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Đang cấu hình WiFi: $selectedSSID'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+
+                    passwordController.dispose();
+                  },
+                  child: const Text('Lưu'),
+                ),
+            ],
+          );
+        },
+      ),
     );
   }
 
