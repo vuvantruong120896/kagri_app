@@ -82,7 +82,7 @@ extension DataServiceExtension on DataService {
 
   /// Get stream of sensor data with error handling
   Stream<List<SensorData>> getSensorDataStreamWithErrorHandling({
-    String? nodeId,
+    required String nodeId,
   }) {
     return getSensorDataStream(nodeId: nodeId).handleError((error, stackTrace) {
       debugPrint('❌ Error in sensor data stream: $error');

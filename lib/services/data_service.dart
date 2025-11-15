@@ -1,3 +1,4 @@
+import 'dart:async';
 import '../models/sensor_data.dart';
 import '../models/device.dart';
 import '../models/routing_table.dart';
@@ -32,17 +33,13 @@ class DataService {
     return _firebaseService!;
   }
 
-  /// Get stream of sensor data for a specific node
+  /// Get stream of sensor data for a specific node from sensor_data path
   /// nodeId: Node address in hex format (e.g., "0xCC64")
-  Stream<List<SensorData>> getSensorDataStream({String? nodeId}) {
+  Stream<List<SensorData>> getSensorDataStream({required String nodeId}) {
     if (useMockData) {
       return _mockDataService.getMockSensorDataStream(nodeId: nodeId);
     } else {
       try {
-        if (nodeId == null) {
-          // If no nodeId, return empty stream (Firebase requires nodeId)
-          return Stream.value(<SensorData>[]);
-        }
         return firebaseService.getSensorDataStream(nodeId: nodeId);
       } catch (e) {
         print('Firebase error, falling back to mock data: $e');
@@ -52,14 +49,12 @@ class DataService {
     }
   }
 
-  /// Get stream of all nodes/devices
+  /// Get stream of all nodes/devices from routing table only
   Stream<List<Device>> getDevicesStream() {
     if (useMockData) {
       return _mockDataService.getMockDevicesStream();
     } else {
       try {
-        // Return stream directly - Firebase will handle connection
-        // Only show error if Firebase actually fails (not during normal init)
         return firebaseService.getNodesStream();
       } catch (e) {
         print('Firebase error: $e');

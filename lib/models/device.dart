@@ -78,23 +78,10 @@ class Device {
     };
   }
 
-  /// Check if node is currently online
-  /// Online if:
-  /// - For Gateways: lastSeen < 10 minutes (gateways don't have routing table entries)
-  /// - For Nodes: (exists in routing table) AND (lastSeen < 10 minutes)
+  /// Check if node is currently online based on routing table presence
+  /// Online = device is in routing_table, Offline = device not in routing_table
   bool get isOnline {
-    final now = DateTime.now();
-    final difference = now.difference(lastSeen);
-
-    if (isGateway) {
-      // Gateway: only check lastSeen (no routing table requirement)
-      // Timeout: 12 minutes
-      return difference.inMinutes < 12;
-    } else {
-      // Regular Node: must be in routing table AND have recent data
-      // Timeout: 12 minutes
-      return inRoutingTable && difference.inMinutes < 12;
-    }
+    return inRoutingTable;
   }
 
   /// Status text for UI display

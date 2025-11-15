@@ -623,7 +623,19 @@ class _HomeScreenState extends State<HomeScreen>
                     itemCount: devices.length,
                     itemBuilder: (context, index) {
                       final device = devices[index];
-                      return _buildDeviceCard(context, device);
+                      // Wrap each device in a stream to get its sensor data for display
+                      return StreamBuilder<List<SensorData>>(
+                        stream: _dataService.getSensorDataStream(
+                          nodeId: device.nodeId,
+                        ),
+                        builder: (context, sensorSnapshot) {
+                          return _buildDeviceCard(
+                            context,
+                            device,
+                            sensorSnapshot,
+                          );
+                        },
+                      );
                     },
                   ),
                 );
@@ -696,7 +708,11 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildDeviceCard(BuildContext context, Device device) {
+  Widget _buildDeviceCard(
+    BuildContext context,
+    Device device,
+    AsyncSnapshot<List<SensorData>> sensorSnapshot,
+  ) {
     return Card(
       margin: const EdgeInsets.only(bottom: AppSizes.paddingMedium),
       elevation: 2,
@@ -709,256 +725,249 @@ class _HomeScreenState extends State<HomeScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header: Device name and status
-              Row(
-                children: [
-                  Icon(
-                    device.isGateway ? Icons.router : Icons.sensors,
-                    color: device.isOnline
-                        ? AppColors.online
-                        : AppColors.offline,
-                    size: 32,
-                  ),
-                  const SizedBox(width: AppSizes.paddingSmall),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                device.displayName,
-                                style: AppTextStyles.heading3,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (device.isGateway) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 5,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue[100],
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Text(
-                                  'GW',
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    color: Colors.blue,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        Text(
-                          device.isGateway
-                              ? 'MAC: ${device.gatewayMAC ?? device.nodeId}'
-                              : 'Node: ${device.nodeId}',
-                          style: AppTextStyles.caption,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: device.isOnline
-                              ? AppColors.online.withValues(alpha: 0.2)
-                              : AppColors.offline.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          device.isOnline ? 'Online' : 'Offline',
-                          style: TextStyle(
-                            color: device.isOnline
-                                ? AppColors.online
-                                : AppColors.offline,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(device.lastSeenText, style: AppTextStyles.caption),
-                    ],
-                  ),
-                ],
-              ),
+              // Always show header with online status based on routing_table
+              _buildDeviceHeader(context, device, sensorSnapshot),
 
               const Divider(height: 24),
 
-              // Latest sensor data
-              StreamBuilder<List<SensorData>>(
-                stream: _dataService.getSensorDataStream(nodeId: device.nodeId),
-                builder: (context, snapshot) {
-                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      child: Center(
-                        child: Text(
-                          'Chưa có dữ liệu sensor',
-                          style: AppTextStyles.caption.copyWith(
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ),
-                    );
-                  }
-
-                  final latestData = snapshot.data!.first;
-
-                  // If it's a soil sensor, use the new Soil Metrics Display widget
-                  if (latestData.deviceType == 'soil_sensor') {
-                    return Column(
-                      children: [
-                        SoilMetricsDisplay(
-                          sensorData: latestData,
-                          isCompact: true,
-                        ),
-                        const SizedBox(height: AppSizes.paddingSmall),
-                        // Battery and Signal info
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _buildSensorValue(
-                                latestData.isBatteryLow
-                                    ? Icons.battery_alert
-                                    : Icons.battery_full,
-                                'Pin',
-                                '${latestData.battery.toStringAsFixed(2)}V (${latestData.batteryPercentage.toStringAsFixed(0)}%)',
-                                latestData.isBatteryLow
-                                    ? AppColors.danger
-                                    : AppColors.online,
-                              ),
-                            ),
-                            if (latestData.rssi != null) ...[
-                              const SizedBox(width: AppSizes.paddingMedium),
-                              Expanded(
-                                child: _buildSensorValue(
-                                  Icons.signal_cellular_alt,
-                                  'RSSI',
-                                  '${latestData.rssi} dBm',
-                                  latestData.isSignalWeak
-                                      ? AppColors.danger
-                                      : AppColors.online,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: AppSizes.paddingSmall),
-                        // Counter and timestamp
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Counter: ${latestData.counter}',
-                              style: AppTextStyles.caption,
-                            ),
-                            Text(
-                              DateFormat(
-                                'HH:mm:ss',
-                              ).format(latestData.timestamp),
-                              style: AppTextStyles.caption,
-                            ),
-                          ],
-                        ),
-                      ],
-                    );
-                  }
-
-                  // For other sensor types (environment, water, etc.), show default view
-                  return Column(
-                    children: [
-                      // Temperature and Humidity
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildSensorValue(
-                              Icons.thermostat,
-                              'Nhiệt độ',
-                              '${latestData.temperature?.toStringAsFixed(1) ?? "N/A"}°C',
-                              AppColors.temperatureNormal,
-                            ),
-                          ),
-                          const SizedBox(width: AppSizes.paddingMedium),
-                          Expanded(
-                            child: _buildSensorValue(
-                              Icons.water_drop,
-                              'Độ ẩm',
-                              '${latestData.humidity?.toStringAsFixed(1) ?? "N/A"}%',
-                              AppColors.humidityNormal,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: AppSizes.paddingSmall),
-                      // Battery and Signal
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildSensorValue(
-                              latestData.isBatteryLow
-                                  ? Icons.battery_alert
-                                  : Icons.battery_full,
-                              'Pin',
-                              '${latestData.battery.toStringAsFixed(2)}V (${latestData.batteryPercentage.toStringAsFixed(0)}%)',
-                              latestData.isBatteryLow
-                                  ? AppColors.danger
-                                  : AppColors.online,
-                            ),
-                          ),
-                          if (latestData.rssi != null) ...[
-                            const SizedBox(width: AppSizes.paddingMedium),
-                            Expanded(
-                              child: _buildSensorValue(
-                                Icons.signal_cellular_alt,
-                                'RSSI',
-                                '${latestData.rssi} dBm',
-                                latestData.isSignalWeak
-                                    ? AppColors.danger
-                                    : AppColors.online,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: AppSizes.paddingSmall),
-                      // Counter and timestamp
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Counter: ${latestData.counter}',
-                            style: AppTextStyles.caption,
-                          ),
-                          Text(
-                            DateFormat('HH:mm:ss').format(latestData.timestamp),
-                            style: AppTextStyles.caption,
-                          ),
-                        ],
-                      ),
-                    ],
-                  );
-                },
-              ),
+              // Latest sensor data (if available)
+              if (sensorSnapshot.hasData && sensorSnapshot.data!.isNotEmpty)
+                _buildDeviceSensorContent(sensorSnapshot.data!.first)
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: Center(
+                    child: Text(
+                      'Chưa có dữ liệu sensor',
+                      style: AppTextStyles.caption.copyWith(color: Colors.grey),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildDeviceHeader(
+    BuildContext context,
+    Device device,
+    AsyncSnapshot<List<SensorData>> sensorSnapshot,
+  ) {
+    // Online status = based on routing_table (device.isOnline = inRoutingTable)
+    final isOnline = device.isOnline;
+
+    // Get latest timestamp if available, otherwise use device.lastSeen
+    final displayTime =
+        sensorSnapshot.hasData && sensorSnapshot.data!.isNotEmpty
+        ? DateFormat('HH:mm:ss').format(sensorSnapshot.data!.first.timestamp)
+        : DateFormat('HH:mm:ss').format(device.lastSeen);
+
+    return Row(
+      children: [
+        Icon(
+          device.isGateway ? Icons.router : Icons.sensors,
+          color: isOnline ? AppColors.online : AppColors.offline,
+          size: 32,
+        ),
+        const SizedBox(width: AppSizes.paddingSmall),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      device.displayName,
+                      style: AppTextStyles.heading3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (device.isGateway) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[100],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'GW',
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: Colors.blue,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              Text(
+                device.isGateway
+                    ? 'MAC: ${device.gatewayMAC ?? device.nodeId}'
+                    : 'Node: ${device.nodeId}',
+                style: AppTextStyles.caption,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: isOnline
+                    ? AppColors.online.withValues(alpha: 0.2)
+                    : AppColors.offline.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                isOnline ? 'Online' : 'Offline',
+                style: TextStyle(
+                  color: isOnline ? AppColors.online : AppColors.offline,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(displayTime, style: AppTextStyles.caption),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDeviceSensorContent(SensorData latestData) {
+    // If it's a soil sensor, use the new Soil Metrics Display widget
+    if (latestData.deviceType == 'soil_sensor') {
+      return Column(
+        children: [
+          SoilMetricsDisplay(sensorData: latestData, isCompact: true),
+          const SizedBox(height: AppSizes.paddingSmall),
+          // Battery and Signal info
+          Row(
+            children: [
+              Expanded(
+                child: _buildSensorValue(
+                  latestData.isBatteryLow
+                      ? Icons.battery_alert
+                      : Icons.battery_full,
+                  'Pin',
+                  '${latestData.battery.toStringAsFixed(2)}V (${latestData.batteryPercentage.toStringAsFixed(0)}%)',
+                  latestData.isBatteryLow ? AppColors.danger : AppColors.online,
+                ),
+              ),
+              if (latestData.rssi != null) ...[
+                const SizedBox(width: AppSizes.paddingMedium),
+                Expanded(
+                  child: _buildSensorValue(
+                    Icons.signal_cellular_alt,
+                    'RSSI',
+                    '${latestData.rssi} dBm',
+                    latestData.isSignalWeak
+                        ? AppColors.danger
+                        : AppColors.online,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: AppSizes.paddingSmall),
+          // Counter and timestamp
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Counter: ${latestData.counter}',
+                style: AppTextStyles.caption,
+              ),
+              Text(
+                DateFormat('HH:mm:ss').format(latestData.timestamp),
+                style: AppTextStyles.caption,
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    // For other sensor types (environment, water, etc.), show default view
+    return Column(
+      children: [
+        // Temperature and Humidity
+        Row(
+          children: [
+            Expanded(
+              child: _buildSensorValue(
+                Icons.thermostat,
+                'Nhiệt độ',
+                '${latestData.temperature?.toStringAsFixed(1) ?? "N/A"}°C',
+                AppColors.temperatureNormal,
+              ),
+            ),
+            const SizedBox(width: AppSizes.paddingMedium),
+            Expanded(
+              child: _buildSensorValue(
+                Icons.water_drop,
+                'Độ ẩm',
+                '${latestData.humidity?.toStringAsFixed(1) ?? "N/A"}%',
+                AppColors.humidityNormal,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSizes.paddingSmall),
+        // Battery and Signal
+        Row(
+          children: [
+            Expanded(
+              child: _buildSensorValue(
+                latestData.isBatteryLow
+                    ? Icons.battery_alert
+                    : Icons.battery_full,
+                'Pin',
+                '${latestData.battery.toStringAsFixed(2)}V (${latestData.batteryPercentage.toStringAsFixed(0)}%)',
+                latestData.isBatteryLow ? AppColors.danger : AppColors.online,
+              ),
+            ),
+            if (latestData.rssi != null) ...[
+              const SizedBox(width: AppSizes.paddingMedium),
+              Expanded(
+                child: _buildSensorValue(
+                  Icons.signal_cellular_alt,
+                  'RSSI',
+                  '${latestData.rssi} dBm',
+                  latestData.isSignalWeak ? AppColors.danger : AppColors.online,
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: AppSizes.paddingSmall),
+        // Counter and timestamp
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Counter: ${latestData.counter}',
+              style: AppTextStyles.caption,
+            ),
+            Text(
+              DateFormat('HH:mm:ss').format(latestData.timestamp),
+              style: AppTextStyles.caption,
+            ),
+          ],
+        ),
+      ],
     );
   }
 
