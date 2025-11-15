@@ -39,9 +39,9 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
         return;
       }
 
-      // Load gateways from Firebase - path: nodes/{userUID}/{gatewayMAC}/{nodeId}/
-      final nodesPath = 'nodes/${user.uid}';
-      final snapshot = await _database.child(nodesPath).get();
+      // Load gateways from Firebase - path: gateways/{userUID}/{gatewayMAC}/routing_table
+      final gatewaysPath = 'gateways/${user.uid}';
+      final snapshot = await _database.child(gatewaysPath).get();
 
       if (!snapshot.exists) {
         setState(() {
@@ -54,10 +54,12 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
       final data = Map<String, dynamic>.from(snapshot.value as Map);
       final gateways = <GatewayInfo>[];
 
-      print('🔍 [Gateway Selection] Loading gateways from: nodes/${user.uid}');
+      print(
+        '🔍 [Gateway Selection] Loading gateways from: gateways/${user.uid}',
+      );
       print('🔍 [Gateway Selection] Data keys: ${data.keys.toList()}');
 
-      // Iterate through gateway MACs (first level under nodes/{userUID})
+      // Iterate through gateway MACs (first level under gateways/{userUID})
       for (final gatewayEntry in data.entries) {
         final gatewayMAC = gatewayEntry.key;
         final gatewayData = gatewayEntry.value;
@@ -67,72 +69,55 @@ class _GatewaySelectionScreenState extends State<GatewaySelectionScreen> {
         if (gatewayData is Map) {
           final gatewayMap = Map<String, dynamic>.from(gatewayData);
 
-          // Look for gateway device (usually has same MAC as nodeId or isGateway flag)
-          Map<String, dynamic>? gatewayInfo;
-          int nodeCount = 0;
+          // Get routing table which contains all nodes including the gateway
           int? latestTimestamp;
+          int nodeCount = 0;
 
-          // Count nodes and find gateway device info
-          for (final nodeEntry in gatewayMap.entries) {
-            final nodeId = nodeEntry.key;
-            final nodeData = nodeEntry.value;
+          final routingTableData = gatewayMap['routing_table'];
+          if (routingTableData is Map) {
+            final routingTable = Map<String, dynamic>.from(routingTableData);
+            nodeCount = routingTable.length; // Count of nodes in routing_table
 
-            if (nodeData is Map) {
-              final nodeMap = Map<String, dynamic>.from(nodeData);
-              nodeCount++;
+            // Get timestamp from routing table metadata if available
+            final timestamp = routingTable['timestamp'] as int?;
+            if (timestamp != null) {
+              latestTimestamp = timestamp;
+            }
+          }
 
-              // Check if this is the gateway device
-              final info = nodeMap['info'];
-              if (info is Map) {
-                final infoMap = Map<String, dynamic>.from(info);
-                final isGateway =
-                    infoMap['isGateway'] == true ||
-                    nodeId.toUpperCase() == gatewayMAC.toUpperCase();
-
-                if (isGateway) {
-                  gatewayInfo = infoMap;
-                  // Use lastSeen from gateway info if available
-                  final infoLastSeen = infoMap['lastSeen'] as int?;
-                  if (infoLastSeen != null) {
-                    latestTimestamp = infoLastSeen;
-                  }
-                }
-              }
-
-              // Track latest timestamp from latest_data (only if gateway lastSeen not found)
-              if (latestTimestamp == null) {
-                final latestData = nodeMap['latest_data'];
-                if (latestData is Map) {
-                  final latestMap = Map<String, dynamic>.from(latestData);
-                  final timestamp = latestMap['timestamp'] as int?;
-                  if (timestamp != null) {
-                    if (latestTimestamp == null ||
-                        timestamp > latestTimestamp) {
-                      latestTimestamp = timestamp;
-                    }
-                  }
-                }
+          // Get gateway status for more details
+          String? gatewayName;
+          final statusData = gatewayMap['status'];
+          if (statusData is Map) {
+            final status = Map<String, dynamic>.from(statusData);
+            gatewayName = status['name'] as String?;
+            // Use status timestamp if routing_table doesn't have one
+            if (latestTimestamp == null) {
+              final statusTimestamp = status['timestamp'] as int?;
+              if (statusTimestamp != null) {
+                latestTimestamp = statusTimestamp;
               }
             }
           }
 
-          // Create gateway info from collected data
+          // Create gateway info - if it has routing_table with nodes, it's online
           final gateway = GatewayInfo(
             mac: gatewayMAC,
-            name: gatewayInfo?['name'] as String?,
+            name:
+                gatewayName ??
+                'Gateway ${gatewayMAC.substring(gatewayMAC.length - 5)}',
             lastSeen: latestTimestamp,
-            online: gatewayInfo?['online'] as bool?,
+            online: nodeCount > 0, // Has nodes = online (in routing_table)
             nodeCount: nodeCount,
-            status: gatewayInfo,
+            status: null,
           );
 
           print('📊 [Gateway Selection] Gateway created:');
           print('   MAC: $gatewayMAC');
           print('   Name: ${gateway.name}');
           print('   LastSeen: $latestTimestamp');
-          print('   Online flag: ${gatewayInfo?['online']}');
           print('   NodeCount: $nodeCount');
-          print('   IsOnline: ${gateway.isOnline}');
+          print('   Online (has routing_table): ${gateway.online}');
 
           gateways.add(gateway);
         }
@@ -395,22 +380,11 @@ class GatewayInfo {
   }
 
   bool get isOnline {
-    // If online flag is explicitly set, use it
+    // Gateway is online if it was explicitly marked as online
+    // (has routing_table with nodes)
     if (online != null) return online!;
 
-    // If we have recent lastSeen data, consider online
-    if (_lastSeenMillis != null) {
-      final now = DateTime.now().millisecondsSinceEpoch;
-      // Consider online if last seen within 5 minutes
-      return (now - _lastSeenMillis!) < 300000; // 5 minutes
-    }
-
-    // If no lastSeen data but nodeCount > 0, assume online
-    // (Gateway must be online to have connected nodes)
-    if (nodeCount != null && nodeCount! > 0) {
-      return true;
-    }
-
+    // Fallback: if no nodeCount info, assume offline
     return false;
   }
 
