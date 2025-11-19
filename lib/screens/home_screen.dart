@@ -8,12 +8,12 @@ import '../services/auth_service.dart';
 import '../utils/constants.dart';
 import 'package:intl/intl.dart';
 import 'network_status_screen.dart';
-import 'provisioning_screen.dart';
-import 'gateway_selection_screen.dart';
+import 'device_discovery_screen.dart';
 import 'settings_screen.dart';
 import 'login_screen.dart';
 import 'device_chart_screen.dart';
 import '../services/wifi_scan_service.dart';
+import '../constants/ble_constants.dart';
 // ignore: unused_import
 import '../widgets/empty_state.dart';
 // ignore: unused_import
@@ -1746,11 +1746,13 @@ class _HomeScreenState extends State<HomeScreen>
                 onTap: () async {
                   Navigator.pop(context); // Close bottom sheet
 
-                  // Navigate to BLE provisioning
+                  // Navigate to BLE device discovery (Gateway only)
                   final result = await Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => const ProvisioningScreen(),
+                      builder: (context) => const DeviceDiscoveryScreen(
+                        initialFilterType: DeviceType.gateway,
+                      ),
                     ),
                   );
 
@@ -1801,14 +1803,16 @@ class _HomeScreenState extends State<HomeScreen>
               ListTile(
                 leading: const Icon(Icons.sensors, color: AppColors.accent),
                 title: const Text('Nodes'),
-                onTap: () {
+                onTap: () async {
                   Navigator.pop(context); // Close bottom sheet
 
-                  // Navigate to gateway selection
-                  Navigator.push(
+                  // Navigate to BLE device discovery (Node only)
+                  await Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => const GatewaySelectionScreen(),
+                      builder: (context) => const DeviceDiscoveryScreen(
+                        initialFilterType: DeviceType.node,
+                      ),
                     ),
                   );
                 },

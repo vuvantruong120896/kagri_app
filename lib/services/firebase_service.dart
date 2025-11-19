@@ -407,6 +407,42 @@ class FirebaseService {
     }
   }
 
+  /// Register a new Gateway after BLE provisioning
+  /// Creates initial entry in gateways/{userUID}/{gatewayMAC}/status
+  /// and nodes/{userUID}/{gatewayMAC}/{gatewayNodeId}/info
+  Future<void> registerGateway(String gatewayMAC) async {
+    final userUID = _currentUserUID;
+    if (userUID == null) {
+      throw Exception('User not logged in');
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+    // Create Gateway status entry
+    await database.ref('$gatewaysPath/$userUID/$gatewayMAC/status').set({
+      'created_at': now,
+      'last_seen': now,
+      'firmware_version': 'Unknown',
+      'status': 'provisioned',
+    });
+
+    // Create Gateway node entry (using last 2 bytes of MAC as nodeId)
+    final macParts = gatewayMAC.split(':');
+    if (macParts.length == 6) {
+      final gatewayNodeId = '0x${macParts[4]}${macParts[5]}';
+      await database
+          .ref('$nodesPath/$userUID/$gatewayMAC/$gatewayNodeId/info')
+          .set({
+            'address': gatewayNodeId,
+            'name': 'Gateway',
+            'type': 'gateway',
+            'gateway_mac': gatewayMAC,
+            'created_at': now,
+            'last_seen': now,
+          });
+    }
+  }
+
   /// Check if Firebase is available
   bool isAvailable() {
     try {
