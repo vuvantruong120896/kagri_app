@@ -303,7 +303,7 @@ class _DeviceChartScreenState extends State<DeviceChartScreen> {
         case 'pH':
           return d.pH ?? 0;
         case 'ec':
-          return d.ec ?? 0;
+          return d.conductivity ?? 0;
         case 'nitrogen':
           return d.nitrogen ?? 0;
         case 'phosphorus':
@@ -425,7 +425,7 @@ class _DeviceChartScreenState extends State<DeviceChartScreen> {
           value = d.pH ?? 0;
           break;
         case 'ec':
-          value = d.ec ?? 0;
+          value = d.conductivity ?? 0;
           break;
         case 'nitrogen':
           value = d.nitrogen ?? 0;

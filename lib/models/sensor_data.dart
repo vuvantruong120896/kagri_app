@@ -16,7 +16,7 @@ class SensorData {
   final double? soilMoisture; // Soil moisture (%) [0-100]
   final double? soilTemperature; // Soil temperature (°C)
   final double? pH; // Soil pH [0-14], optimal 6-7
-  final double? ec; // Electrical Conductivity (mS/cm) [0-10]
+  final double? conductivity; // Electrical Conductivity (µS/cm) [0-10]
   final double? nitrogen; // Nitrogen content (mg/kg) [0-300]
   final double? phosphorus; // Phosphorus content (mg/kg) [0-200]
   final double? potassium; // Potassium content (mg/kg) [0-300]
@@ -45,7 +45,7 @@ class SensorData {
     this.soilMoisture,
     this.soilTemperature,
     this.pH,
-    this.ec,
+    this.conductivity,
     this.nitrogen,
     this.phosphorus,
     this.potassium,
@@ -102,7 +102,7 @@ class SensorData {
       soilMoisture: json['soilMoisture']?.toDouble(),
       soilTemperature: json['soilTemperature']?.toDouble(),
       pH: json['pH']?.toDouble(),
-      ec: json['ec']?.toDouble(),
+      conductivity: json['conductivity']?.toDouble(),
       nitrogen: json['nitrogen']?.toDouble(),
       phosphorus: json['phosphorus']?.toDouble(),
       potassium: json['potassium']?.toDouble(),
@@ -133,7 +133,7 @@ class SensorData {
         if (soilMoisture != null) json['soilMoisture'] = soilMoisture!;
         if (soilTemperature != null) json['soilTemperature'] = soilTemperature!;
         if (pH != null) json['pH'] = pH!;
-        if (ec != null) json['ec'] = ec!;
+        if (conductivity != null) json['conductivity'] = conductivity!;
         if (nitrogen != null) json['nitrogen'] = nitrogen!;
         if (phosphorus != null) json['phosphorus'] = phosphorus!;
         if (potassium != null) json['potassium'] = potassium!;
@@ -185,7 +185,7 @@ class SensorData {
     double? soilMoisture,
     double? soilTemperature,
     double? pH,
-    double? ec,
+    double? conductivity,
     double? nitrogen,
     double? phosphorus,
     double? potassium,
@@ -209,7 +209,7 @@ class SensorData {
       soilMoisture: soilMoisture ?? this.soilMoisture,
       soilTemperature: soilTemperature ?? this.soilTemperature,
       pH: pH ?? this.pH,
-      ec: ec ?? this.ec,
+      conductivity: conductivity ?? this.conductivity,
       nitrogen: nitrogen ?? this.nitrogen,
       phosphorus: phosphorus ?? this.phosphorus,
       potassium: potassium ?? this.potassium,
