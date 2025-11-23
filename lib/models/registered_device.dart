@@ -73,10 +73,16 @@ class RegisteredDevice {
       nodeId = '0x$nodeId';
     }
 
+    String displayName = data['displayName'] as String? ?? 'Unknown Device';
+    // Auto-fix old "Sensor" naming to "Node"
+    if (displayName.startsWith('Sensor ')) {
+      displayName = displayName.replaceFirst('Sensor ', 'Node ');
+    }
+
     return RegisteredDevice(
       nodeId: nodeId,
       deviceType: data['deviceType'] as String? ?? 'unknown',
-      displayName: data['displayName'] as String? ?? 'Unknown Device',
+      displayName: displayName,
       location: data['location'] as String?,
       notes: data['notes'] as String?,
       provisionedAt: data['provisionedAt'] != null

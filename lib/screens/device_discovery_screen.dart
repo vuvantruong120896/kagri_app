@@ -300,7 +300,7 @@ class _DeviceDiscoveryScreenState extends State<DeviceDiscoveryScreen>
           deviceType: deviceTypeStr,
           displayName: deviceType == DeviceType.gateway
               ? 'Gateway $normalizedNodeId'
-              : 'Sensor $normalizedNodeId',
+              : 'Node $normalizedNodeId',
         );
 
         print(
