@@ -140,47 +140,83 @@ class FirebaseService {
     });
   }
 
+  /// Normalize nodeId to lowercase hex format (0xXXXX)
+  /// Handles: "0xABCD", "0xabcd", "ABCD", "abcd"
+  String _normalizeNodeId(String nodeId) {
+    String normalized = nodeId.toLowerCase();
+    if (!normalized.startsWith('0x')) {
+      normalized = '0x$normalized';
+    }
+    return normalized;
+  }
+
   /// Get stream of sensor data for a specific node from sensor_data path
   /// Path: sensor_data/{userUID}/{nodeId}/{timestamp}
+  ///
+  /// Gateway sends data with format: 0x65E8 (lowercase 0x, uppercase hex digits)
   Stream<List<SensorData>> getSensorDataStream({required String nodeId}) {
     final userUID = _currentUserUID;
     if (userUID == null) {
+      print('⚠️ No user authenticated');
       return Stream.value(<SensorData>[]);
     }
 
-    final ref = database.ref('$sensorDataPath/$userUID/$nodeId');
+    // Normalize to match Gateway format: 0x65E8 (lowercase 0x + uppercase hex)
+    String normalizedNodeId = _normalizeNodeId(nodeId); // 0x65e8
+    // Convert hex digits to uppercase but keep '0x' lowercase
+    normalizedNodeId =
+        '0x' + normalizedNodeId.substring(2).toUpperCase(); // 0x65E8
+
+    print('🔍 getSensorDataStream: $nodeId → $normalizedNodeId');
+
+    final ref = database.ref('$sensorDataPath/$userUID/$normalizedNodeId');
+
     return ref.orderByKey().limitToLast(100).onValue.map((event) {
       if (event.snapshot.value == null) {
+        print('⚠️ No sensor data found for $normalizedNodeId');
         return <SensorData>[];
       }
 
-      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-      final sensorDataList = <SensorData>[];
-
-      data.forEach((timestamp, sensorJson) {
-        if (sensorJson is Map) {
-          try {
-            final sensorMap = Map<String, dynamic>.from(sensorJson);
-            // Add timestamp from key if not in data
-            if (!sensorMap.containsKey('timestamp')) {
-              sensorMap['timestamp'] = int.parse(timestamp);
-            }
-            final sensorData = SensorData.fromJson(
-              sensorMap,
-              nodeId: nodeId,
-              id: timestamp,
-            );
-            sensorDataList.add(sensorData);
-          } catch (e) {
-            print('Error parsing sensor data for $nodeId at $timestamp: $e');
-          }
-        }
-      });
-
-      // Sort by timestamp descending (newest first)
-      sensorDataList.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      return sensorDataList;
+      print('✅ Found sensor data for $normalizedNodeId');
+      return _parseSensorData(event.snapshot.value, normalizedNodeId);
     });
+  }
+
+  /// Helper to parse sensor data from Firebase snapshot
+  List<SensorData> _parseSensorData(dynamic snapshotValue, String nodeId) {
+    if (snapshotValue == null) {
+      return <SensorData>[];
+    }
+
+    final data = Map<String, dynamic>.from(snapshotValue as Map);
+    final sensorDataList = <SensorData>[];
+
+    print('📊 Parsing ${data.length} sensor entries for $nodeId');
+
+    data.forEach((timestamp, sensorJson) {
+      if (sensorJson is Map) {
+        try {
+          final sensorMap = Map<String, dynamic>.from(sensorJson);
+          // Add timestamp from key if not in data
+          if (!sensorMap.containsKey('timestamp')) {
+            sensorMap['timestamp'] = int.parse(timestamp);
+          }
+          final sensorData = SensorData.fromJson(
+            sensorMap,
+            nodeId: nodeId,
+            id: timestamp,
+          );
+          sensorDataList.add(sensorData);
+        } catch (e) {
+          print('Error parsing sensor data for $nodeId at $timestamp: $e');
+        }
+      }
+    });
+
+    // Sort by timestamp descending (newest first)
+    sensorDataList.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    print('✅ Returning ${sensorDataList.length} sensor data items');
+    return sensorDataList;
   }
 
   /// Get latest sensor data (one-time fetch)

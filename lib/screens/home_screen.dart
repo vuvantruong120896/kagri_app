@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/sensor_data.dart';
 import '../models/device.dart';
+import '../models/registered_device.dart';
 import '../services/data_service.dart';
+import '../services/device_registry_service.dart';
 import '../services/auth_service.dart';
 import '../utils/constants.dart';
 import 'package:intl/intl.dart';
@@ -29,11 +31,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   final DataService _dataService = DataService();
+  final DeviceRegistryService _deviceRegistry = DeviceRegistryService();
   String? _selectedNodeId; // Changed from _selectedDeviceId to _selectedNodeId
   bool _justProvisioned = false; // Track if just finished provisioning
   Timer? _provisioningTimeoutTimer;
   Timer? _countdownTimer;
-  int _remainingSeconds = 30; // Countdown from 30 seconds
+  int _remainingSeconds = 30; // Countdown timer for provisioning
   late AnimationController _syncAnimationController;
 
   @override
@@ -43,6 +46,16 @@ class _HomeScreenState extends State<HomeScreen>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(); // Repeat infinitely without rebuild
+
+    // Clean up any duplicate entries
+    _deviceRegistry
+        .cleanupDuplicates()
+        .then((_) {
+          print('✅ Device cleanup completed');
+        })
+        .catchError((e) {
+          print('Error during cleanup: $e');
+        });
   }
 
   @override
@@ -180,8 +193,8 @@ class _HomeScreenState extends State<HomeScreen>
           Container(
             padding: const EdgeInsets.all(AppSizes.paddingMedium),
             color: AppColors.primary.withValues(alpha: 0.1),
-            child: StreamBuilder<List<Device>>(
-              stream: _dataService.getDevicesStream(),
+            child: StreamBuilder<List<RegisteredDevice>>(
+              stream: _deviceRegistry.getDevicesStream(),
               builder: (context, snapshot) {
                 if (!snapshot.hasData) {
                   return const SizedBox(
@@ -190,7 +203,10 @@ class _HomeScreenState extends State<HomeScreen>
                   );
                 }
 
-                final devices = snapshot.data!;
+                // Convert RegisteredDevice to Device for compatibility
+                final devices = snapshot.data!
+                    .map((rd) => rd.toDevice())
+                    .toList();
                 return Row(
                   children: [
                     const Icon(Icons.filter_list, color: AppColors.primary),
@@ -222,8 +238,33 @@ class _HomeScreenState extends State<HomeScreen>
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      '${_displayName(device)} (${device.nodeId})',
+                                      device.isGateway
+                                          ? '📡 ${_displayName(device)}'
+                                          : '🌱 ${_displayName(device)}',
                                       overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: device.isGateway
+                                          ? Colors.orange[100]
+                                          : Colors.green[100],
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                    child: Text(
+                                      device.isGateway ? 'GW' : 'Node',
+                                      style: TextStyle(
+                                        fontSize: 9,
+                                        color: device.isGateway
+                                            ? Colors.orange
+                                            : Colors.green,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -247,14 +288,17 @@ class _HomeScreenState extends State<HomeScreen>
           // Statistics summary
           Container(
             padding: const EdgeInsets.all(AppSizes.paddingMedium),
-            child: StreamBuilder<List<Device>>(
-              stream: _dataService.getDevicesStream(),
+            child: StreamBuilder<List<RegisteredDevice>>(
+              stream: _deviceRegistry.getDevicesStream(),
               builder: (context, devSnapshot) {
                 if (!devSnapshot.hasData || devSnapshot.data!.isEmpty) {
                   return const SizedBox.shrink();
                 }
 
-                final devices = devSnapshot.data!;
+                // Convert to Device for compatibility
+                final devices = devSnapshot.data!
+                    .map((rd) => rd.toDevice())
+                    .toList();
                 final onlineCount = devices.where((d) => d.isOnline).length;
                 final totalCount = devices.length;
 
@@ -287,8 +331,8 @@ class _HomeScreenState extends State<HomeScreen>
 
           // Device/Node list with latest data
           Expanded(
-            child: StreamBuilder<List<Device>>(
-              stream: _dataService.getDevicesStream(),
+            child: StreamBuilder<List<RegisteredDevice>>(
+              stream: _deviceRegistry.getDevicesStream(),
               builder: (context, snapshot) {
                 // Show loading only on first connection (no data yet)
                 if (snapshot.connectionState == ConnectionState.waiting &&
@@ -621,7 +665,9 @@ class _HomeScreenState extends State<HomeScreen>
                     padding: const EdgeInsets.all(AppSizes.paddingMedium),
                     itemCount: devices.length,
                     itemBuilder: (context, index) {
-                      final device = devices[index];
+                      final registeredDevice = devices[index];
+                      final device = registeredDevice
+                          .toDevice(); // Convert for compatibility
                       // Wrap each device in a stream to get its sensor data for display
                       return StreamBuilder<List<SensorData>>(
                         stream: _dataService.getSensorDataStream(
@@ -643,14 +689,15 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ],
       ),
-      floatingActionButton: StreamBuilder<List<Device>>(
-        stream: _dataService.getDevicesStream(),
+      floatingActionButton: StreamBuilder<List<RegisteredDevice>>(
+        stream: _deviceRegistry.getDevicesStream(),
         builder: (context, snapshot) {
           if (!snapshot.hasData || snapshot.data!.isEmpty) {
             return const SizedBox.shrink();
           }
 
-          final devices = snapshot.data!;
+          // Convert to Device for compatibility
+          final devices = snapshot.data!.map((rd) => rd.toDevice()).toList();
 
           return FloatingActionButton(
             onPressed: () {
@@ -712,6 +759,17 @@ class _HomeScreenState extends State<HomeScreen>
     Device device,
     AsyncSnapshot<List<SensorData>> sensorSnapshot,
   ) {
+    print('[HomeScreen._buildDeviceCard] Device: ${device.nodeId}');
+    print('  - hasData: ${sensorSnapshot.hasData}');
+    print('  - hasError: ${sensorSnapshot.hasError}');
+    print('  - connectionState: ${sensorSnapshot.connectionState}');
+    if (sensorSnapshot.hasData) {
+      print('  - data length: ${sensorSnapshot.data?.length}');
+    }
+    if (sensorSnapshot.hasError) {
+      print('  - error: ${sensorSnapshot.error}');
+    }
+
     return Card(
       margin: const EdgeInsets.only(bottom: AppSizes.paddingMedium),
       elevation: 2,
@@ -784,27 +842,48 @@ class _HomeScreenState extends State<HomeScreen>
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  if (device.isGateway) ...[
-                    const SizedBox(width: 6),
+                  const SizedBox(width: 8),
+                  // Device type badge
+                  if (device.isGateway)
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 5,
-                        vertical: 2,
+                        horizontal: 8,
+                        vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.blue[100],
+                        color: Colors.orange[100],
                         borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.orange, width: 1),
                       ),
                       child: const Text(
-                        'GW',
+                        '📡 Gateway',
                         style: TextStyle(
-                          fontSize: 9,
-                          color: Colors.blue,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 10,
+                          color: Colors.orange,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.green[100],
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.green, width: 1),
+                      ),
+                      child: const Text(
+                        '🌱 Node',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.green,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
-                  ],
                 ],
               ),
               Text(
