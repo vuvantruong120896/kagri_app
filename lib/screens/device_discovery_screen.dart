@@ -4,6 +4,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../constants/ble_constants.dart';
 import '../services/ble_provisioning_service.dart';
 import '../services/firebase_service.dart';
+import '../services/device_registry_service.dart';
 
 /// Device Discovery Screen
 ///
@@ -280,6 +281,36 @@ class _DeviceDiscoveryScreenState extends State<DeviceDiscoveryScreen>
 
       // Success!
       print('[DeviceDiscovery] Provisioning successful!');
+
+      // Normalize nodeId to hex format (0xXXXX)
+      final normalizedNodeId = _normalizeNodeId(resultMAC);
+      print(
+        '[DeviceDiscovery] Normalized nodeId: $resultMAC → $normalizedNodeId',
+      );
+
+      // Register device to Firebase users/{uid}/devices/
+      try {
+        final deviceRegistry = DeviceRegistryService();
+        final deviceTypeStr = deviceType == DeviceType.gateway
+            ? 'gateway'
+            : 'soil_sensor'; // TODO: Detect actual sensor type
+
+        await deviceRegistry.registerDevice(
+          nodeId: normalizedNodeId,
+          deviceType: deviceTypeStr,
+          displayName: deviceType == DeviceType.gateway
+              ? 'Gateway $normalizedNodeId'
+              : 'Sensor $normalizedNodeId',
+        );
+
+        print(
+          '[DeviceDiscovery] ✅ Device registered to Firebase: $normalizedNodeId',
+        );
+      } catch (e) {
+        print('[DeviceDiscovery] ⚠️ Failed to register device: $e');
+        // Don't fail provisioning if registration fails - can retry later
+      }
+
       if (!mounted) return;
       Navigator.pop(context); // Close progress dialog
 
@@ -862,5 +893,27 @@ class _DeviceDiscoveryScreenState extends State<DeviceDiscoveryScreen>
         ),
       ),
     );
+  }
+
+  /// Convert MAC address to hex format (last 2 bytes)
+  /// Example: "98:A3:16:CD:65:E8" → "0x65e8" (lowercase)
+  /// If already in hex format "0xXXXX", normalize to lowercase
+  String _normalizeNodeId(String nodeId) {
+    // Already in hex format - normalize to lowercase
+    if (nodeId.toLowerCase().startsWith('0x') && nodeId.length == 6) {
+      return nodeId.toLowerCase();
+    }
+
+    // MAC format: XX:XX:XX:XX:XX:XX
+    if (nodeId.contains(':') && nodeId.length >= 17) {
+      final parts = nodeId.split(':');
+      if (parts.length == 6) {
+        // Extract last 2 bytes (lowercase)
+        return '0x${parts[4]}${parts[5]}'.toLowerCase();
+      }
+    }
+
+    // Default: return as-is (lowercase)
+    return nodeId.toLowerCase();
   }
 }

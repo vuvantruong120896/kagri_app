@@ -1,4 +1,5 @@
 {
     "commentTranslate.targetLanguage": "vi",
-    "idf.pythonInstallPath": "e:\\esp\\5.4.2\\tools\\idf-python\\3.11.2\\python.exe"
+    "idf.pythonInstallPath": "e:\\esp\\5.4.2\\tools\\idf-python\\3.11.2\\python.exe",
+    "cmake.sourceDirectory": "E:/mobile_app/kagri_app/linux"
 }
