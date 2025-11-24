@@ -81,7 +81,7 @@ class SensorCard extends StatelessWidget {
               // Additional soil parameters (if soil sensor)
               if (sensorData.deviceType == 'soil_sensor' &&
                   (sensorData.pH != null ||
-                      sensorData.ec != null ||
+                      sensorData.conductivity != null ||
                       sensorData.nitrogen != null)) ...[
                 const SizedBox(height: AppSizes.paddingSmall),
                 Row(
@@ -93,11 +93,11 @@ class SensorCard extends StatelessWidget {
                           sensorData.pH!.toStringAsFixed(1),
                         ),
                       ),
-                    if (sensorData.ec != null)
+                    if (sensorData.conductivity != null)
                       Expanded(
                         child: _buildCompactValue(
                           '⚡ EC',
-                          '${sensorData.ec!.toStringAsFixed(1)} mS/cm',
+                          '${sensorData.conductivity!.toStringAsFixed(1)} mS/cm',
                         ),
                       ),
                     if (sensorData.nitrogen != null)

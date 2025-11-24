@@ -7,6 +7,7 @@ import '../models/registered_device.dart';
 import '../services/data_service.dart';
 import '../services/device_registry_service.dart';
 import '../services/auth_service.dart';
+import '../services/firebase_service.dart';
 import '../utils/constants.dart';
 import 'package:intl/intl.dart';
 import 'network_status_screen.dart';
@@ -285,45 +286,74 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
 
-          // Statistics summary
+          // Statistics summary with real-time data
           Container(
             padding: const EdgeInsets.all(AppSizes.paddingMedium),
-            child: StreamBuilder<List<RegisteredDevice>>(
-              stream: _deviceRegistry.getDevicesStream(),
-              builder: (context, devSnapshot) {
-                if (!devSnapshot.hasData || devSnapshot.data!.isEmpty) {
-                  return const SizedBox.shrink();
-                }
+            child: StreamBuilder<List<Device>>(
+              stream: FirebaseService().getNodesStream(),
+              builder: (context, nodesSnapshot) {
+                return StreamBuilder<List<RegisteredDevice>>(
+                  stream: _deviceRegistry.getDevicesStream(),
+                  builder: (context, devSnapshot) {
+                    if (!devSnapshot.hasData || devSnapshot.data!.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
 
-                // Convert to Device for compatibility
-                final devices = devSnapshot.data!
-                    .map((rd) => rd.toDevice())
-                    .toList();
-                final onlineCount = devices.where((d) => d.isOnline).length;
-                final totalCount = devices.length;
+                    final registeredDevices = devSnapshot.data!;
+                    final totalCount = registeredDevices.length;
 
-                return Row(
-                  children: [
-                    Expanded(
-                      child: _buildStatCard(
-                        'Tổng số Node',
-                        '$totalCount',
-                        'Online: $onlineCount',
-                        Icons.router,
-                        AppColors.primary,
-                      ),
-                    ),
-                    const SizedBox(width: AppSizes.paddingMedium),
-                    Expanded(
-                      child: _buildStatCard(
-                        'Trạng thái',
-                        onlineCount > 0 ? 'Hoạt động' : 'Offline',
-                        '$onlineCount/$totalCount online',
-                        Icons.signal_cellular_alt,
-                        onlineCount > 0 ? AppColors.online : AppColors.offline,
-                      ),
-                    ),
-                  ],
+                    // Merge real-time data from Firebase with registered devices
+                    int onlineCount = 0;
+                    if (nodesSnapshot.hasData) {
+                      final realTimeDevices = nodesSnapshot.data!;
+
+                      for (final regDevice in registeredDevices) {
+                        // Find matching real-time device
+                        final realTimeDevice = realTimeDevices.firstWhere(
+                          (rtDevice) =>
+                              rtDevice.nodeId.toLowerCase() ==
+                              regDevice.nodeId.toLowerCase(),
+                          orElse: () => regDevice
+                              .toDevice(), // fallback to registered device
+                        );
+
+                        if (realTimeDevice.isOnline) {
+                          onlineCount++;
+                        }
+                      }
+                    } else {
+                      // Fallback to registered device data if no real-time data
+                      onlineCount = registeredDevices
+                          .where((rd) => rd.toDevice().isOnline)
+                          .length;
+                    }
+
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: _buildStatCard(
+                            'Tổng số Node',
+                            '$totalCount',
+                            'Online: $onlineCount',
+                            Icons.router,
+                            AppColors.primary,
+                          ),
+                        ),
+                        const SizedBox(width: AppSizes.paddingMedium),
+                        Expanded(
+                          child: _buildStatCard(
+                            'Trạng thái',
+                            onlineCount > 0 ? 'Hoạt động' : 'Offline',
+                            '$onlineCount/$totalCount online',
+                            Icons.signal_cellular_alt,
+                            onlineCount > 0
+                                ? AppColors.online
+                                : AppColors.offline,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 );
               },
             ),
@@ -623,66 +653,91 @@ class _HomeScreenState extends State<HomeScreen>
                   });
                 }
 
-                var devices = snapshot.data!;
+                return StreamBuilder<List<Device>>(
+                  stream: FirebaseService().getNodesStream(),
+                  builder: (context, liveSnapshot) {
+                    var devices = snapshot.data!;
+                    final liveDevices = liveSnapshot.hasData
+                        ? {for (var d in liveSnapshot.data!) d.nodeId: d}
+                        : <String, Device>{};
 
-                // Filter by selected node if any
-                if (_selectedNodeId != null) {
-                  devices = devices
-                      .where((d) => d.nodeId == _selectedNodeId)
-                      .toList();
-                }
+                    // Filter by selected node if any
+                    if (_selectedNodeId != null) {
+                      devices = devices
+                          .where((d) => d.nodeId == _selectedNodeId)
+                          .toList();
+                    }
 
-                if (devices.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.filter_alt_off,
-                          size: 64,
-                          color: Colors.grey,
+                    if (devices.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.filter_alt_off,
+                              size: 64,
+                              color: Colors.grey,
+                            ),
+                            const SizedBox(height: AppSizes.paddingMedium),
+                            Text(
+                              'Không tìm thấy node',
+                              style: AppTextStyles.heading2,
+                            ),
+                            const SizedBox(height: AppSizes.paddingSmall),
+                            Text(
+                              'Node được chọn không có dữ liệu',
+                              style: AppTextStyles.body2,
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: AppSizes.paddingMedium),
-                        Text(
-                          'Không tìm thấy node',
-                          style: AppTextStyles.heading2,
-                        ),
-                        const SizedBox(height: AppSizes.paddingSmall),
-                        Text(
-                          'Node được chọn không có dữ liệu',
-                          style: AppTextStyles.body2,
-                        ),
-                      ],
-                    ),
-                  );
-                }
+                      );
+                    }
 
-                return RefreshIndicator(
-                  onRefresh: () async {
-                    setState(() {}); // Trigger rebuild
-                  },
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(AppSizes.paddingMedium),
-                    itemCount: devices.length,
-                    itemBuilder: (context, index) {
-                      final registeredDevice = devices[index];
-                      final device = registeredDevice
-                          .toDevice(); // Convert for compatibility
-                      // Wrap each device in a stream to get its sensor data for display
-                      return StreamBuilder<List<SensorData>>(
-                        stream: _dataService.getSensorDataStream(
-                          nodeId: device.nodeId,
-                        ),
-                        builder: (context, sensorSnapshot) {
-                          return _buildDeviceCard(
-                            context,
-                            device,
-                            sensorSnapshot,
+                    return RefreshIndicator(
+                      onRefresh: () async {
+                        setState(() {}); // Trigger rebuild
+                      },
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(AppSizes.paddingMedium),
+                        itemCount: devices.length,
+                        itemBuilder: (context, index) {
+                          final registeredDevice = devices[index];
+                          var device = registeredDevice
+                              .toDevice(); // Convert for compatibility
+
+                          // Override with live status from FirebaseService
+                          if (liveDevices.containsKey(device.nodeId)) {
+                            final liveDevice = liveDevices[device.nodeId]!;
+                            device = device.copyWith(
+                              lastSeen: liveDevice.lastSeen,
+                              inRoutingTable: liveDevice.inRoutingTable,
+                              rssi: liveDevice.rssi,
+                              snr: liveDevice.snr,
+                              metric: liveDevice.metric,
+                              via: liveDevice.via,
+                            );
+                          } else {
+                            // Not in routing table = offline
+                            device = device.copyWith(inRoutingTable: false);
+                          }
+
+                          // Wrap each device in a stream to get its sensor data for display
+                          return StreamBuilder<List<SensorData>>(
+                            stream: _dataService.getSensorDataStream(
+                              nodeId: device.nodeId,
+                            ),
+                            builder: (context, sensorSnapshot) {
+                              return _buildDeviceCard(
+                                context,
+                                device,
+                                sensorSnapshot,
+                              );
+                            },
                           );
                         },
-                      );
-                    },
-                  ),
+                      ),
+                    );
+                  },
                 );
               },
             ),
@@ -759,23 +814,29 @@ class _HomeScreenState extends State<HomeScreen>
     Device device,
     AsyncSnapshot<List<SensorData>> sensorSnapshot,
   ) {
-    print('[HomeScreen._buildDeviceCard] Device: ${device.nodeId}');
-    print('  - hasData: ${sensorSnapshot.hasData}');
-    print('  - hasError: ${sensorSnapshot.hasError}');
-    print('  - connectionState: ${sensorSnapshot.connectionState}');
-    if (sensorSnapshot.hasData) {
-      print('  - data length: ${sensorSnapshot.data?.length}');
-    }
-    if (sensorSnapshot.hasError) {
-      print('  - error: ${sensorSnapshot.error}');
+    // Update device status based on sensor data if available
+    Device displayDevice = device;
+    if (sensorSnapshot.hasData && sensorSnapshot.data!.isNotEmpty) {
+      final latestData = sensorSnapshot.data!.first;
+      // If sensor data is newer than device.lastSeen, update lastSeen
+      if (latestData.timestamp.isAfter(device.lastSeen)) {
+        displayDevice = device.copyWith(
+          lastSeen: latestData.timestamp,
+          // If recent data (< 22 mins), consider it in routing table (effectively online)
+          inRoutingTable:
+              DateTime.now().difference(latestData.timestamp).inMinutes < 22
+              ? true
+              : device.inRoutingTable,
+        );
+      }
     }
 
     return Card(
       margin: const EdgeInsets.only(bottom: AppSizes.paddingMedium),
       elevation: 2,
       child: InkWell(
-        onTap: () => _showDeviceDetails(context, device),
-        onLongPress: () => _showDeviceOptionsMenu(context, device),
+        onTap: () => _showDeviceDetails(context, displayDevice),
+        onLongPress: () => _showDeviceOptionsMenu(context, displayDevice),
         borderRadius: BorderRadius.circular(8),
         child: Padding(
           padding: const EdgeInsets.all(AppSizes.paddingMedium),
@@ -783,7 +844,7 @@ class _HomeScreenState extends State<HomeScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Always show header with online status based on routing_table
-              _buildDeviceHeader(context, device, sensorSnapshot),
+              _buildDeviceHeader(context, displayDevice, sensorSnapshot),
 
               const Divider(height: 24),
 

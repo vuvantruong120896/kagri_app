@@ -38,6 +38,24 @@ class Device {
 
   /// Create from Firebase Realtime Database nodes/{nodeId}/info JSON
   factory Device.fromJson(Map<String, dynamic> json, {String? nodeId}) {
+    final latestData = json['latestData'] != null
+        ? SensorData.fromJson(json['latestData'], nodeId: nodeId)
+        : null;
+
+    DateTime lastSeen = json['last_seen'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(
+            json['last_seen'] is int
+                ? json['last_seen'] * 1000
+                : int.parse(json['last_seen'].toString()) * 1000,
+          )
+        : DateTime.now();
+
+    // If we have recent sensor data, that counts as being seen
+    // This fixes the issue where last_seen in info path is stale but latest_data is fresh
+    if (latestData != null && latestData.timestamp.isAfter(lastSeen)) {
+      lastSeen = latestData.timestamp;
+    }
+
     return Device(
       nodeId: nodeId ?? json['address'] ?? json['nodeId'] ?? '',
       name: json['name'] ?? 'Sensor Node',
@@ -52,16 +70,8 @@ class Device {
                   : int.parse(json['created_at'].toString()) * 1000,
             )
           : DateTime.now(),
-      lastSeen: json['last_seen'] != null
-          ? DateTime.fromMillisecondsSinceEpoch(
-              json['last_seen'] is int
-                  ? json['last_seen'] * 1000
-                  : int.parse(json['last_seen'].toString()) * 1000,
-            )
-          : DateTime.now(),
-      latestData: json['latestData'] != null
-          ? SensorData.fromJson(json['latestData'], nodeId: nodeId)
-          : null,
+      lastSeen: lastSeen,
+      latestData: latestData,
     );
   }
 
@@ -78,20 +88,37 @@ class Device {
     };
   }
 
-  /// Check if node is currently online based on routing table presence
-  /// Online = device is in routing_table, Offline = device not in routing_table
+  /// Check if node is currently online based on routing table presence AND recent activity
+  /// Online = device is in routing_table AND has sent data within last 22 minutes
+  /// Offline = device not in routing_table OR no data for > 22 minutes
+  ///
+  /// This prevents showing "online" for nodes that are in routing table but haven't
+  /// sent data (e.g., node disconnected but Gateway hasn't detected timeout yet)
+  ///
+  /// Timeout: 22 minutes - allows detecting nodes without fresh sensor data
+  /// while avoiding false positives from temporary network delays
   bool get isOnline {
-    return inRoutingTable;
+    if (!inRoutingTable) {
+      // Not in routing table = definitely offline
+      return false;
+    }
+
+    // In routing table - check if recently active
+    // Node must have sent data within last 22 minutes to be considered online
+    final now = DateTime.now();
+    final difference = now.difference(lastSeen);
+    return difference.inMinutes < 22;
   }
 
   /// Status text for UI display
   String get statusText => isOnline ? 'Online' : 'Offline';
 
-  /// Check if node is recently active (seen within last 10 minutes)
+  /// Check if node is recently active (seen within last 22 minutes)
+  /// Same logic as isOnline but can be used independently
   bool get isRecentlyActive {
     final now = DateTime.now();
     final difference = now.difference(lastSeen);
-    return difference.inMinutes < 10;
+    return difference.inMinutes < 22;
   }
 
   /// Check if this is a Gateway (MAC format) or Node (hex nodeId)

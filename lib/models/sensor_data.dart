@@ -223,9 +223,10 @@ class SensorData {
     );
   }
 
-  /// Battery level percentage estimate (assuming 3.0V = 0%, 4.2V = 100%)
+  /// Battery level percentage estimate (assuming 3.5V = 0%, 4.2V = 100%)
+  /// Updated to match firmware battery thresholds (Nov 24, 2025)
   double get batteryPercentage {
-    const minVoltage = 3.0;
+    const minVoltage = 3.5; // Changed from 3.0V to match firmware
     const maxVoltage = 4.2;
     if (battery <= minVoltage) return 0.0;
     if (battery >= maxVoltage) return 100.0;

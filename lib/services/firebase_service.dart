@@ -104,13 +104,41 @@ class FirebaseService {
                     : 'Node ${nodeId.substring(2)}';
                 final deviceType = isGatewayNode ? 'gateway' : 'sensor';
 
+                // Get latest sensor data timestamp for accurate lastSeen
+                // This is critical for online/offline detection
+                // Use a short timeout to avoid blocking the stream
+                // Default to epoch 0 to ensure Offline if no sensor data found
+                DateTime lastSeenTimestamp =
+                    DateTime.fromMillisecondsSinceEpoch(0);
+                try {
+                  // Set a timeout to prevent hanging if Firebase is slow
+                  final latestSensorDataFuture = getLatestSensorData(nodeId);
+                  final latestSensorData = await latestSensorDataFuture.timeout(
+                    const Duration(seconds: 5),
+                    onTimeout: () {
+                      print(
+                        'Timeout getting sensor data for $nodeId, using routing table timestamp',
+                      );
+                      return null;
+                    },
+                  );
+
+                  if (latestSensorData != null) {
+                    lastSeenTimestamp = latestSensorData.timestamp;
+                  }
+                } catch (e) {
+                  print('Error getting latest sensor data for $nodeId: $e');
+                  // Fallback to routing table timestamp
+                }
+
                 final nodeDevice = Device(
                   nodeId: nodeId,
                   name: deviceName,
                   type: deviceType,
                   gatewayMAC: gatewayMAC,
                   createdAt: routingTable.timestamp,
-                  lastSeen: routingTable.timestamp,
+                  lastSeen:
+                      lastSeenTimestamp, // Use actual sensor data timestamp
                   inRoutingTable: true,
                   via: routeNode.via,
                   metric: routeNode.metric,
@@ -140,20 +168,28 @@ class FirebaseService {
     });
   }
 
-  /// Normalize nodeId to lowercase hex format (0xXXXX)
-  /// Handles: "0xABCD", "0xabcd", "ABCD", "abcd"
+  /// Normalize nodeId to match Gateway format (0xXXXX with uppercase hex digits)
+  /// Handles: "0xABCD", "0xabcd", "ABCD", "abcd", "0x0abc" -> "0xABC"
   String _normalizeNodeId(String nodeId) {
-    String normalized = nodeId.toLowerCase();
-    if (!normalized.startsWith('0x')) {
-      normalized = '0x$normalized';
+    String hexPart = nodeId.toLowerCase();
+
+    // Remove '0x' prefix if present
+    if (hexPart.startsWith('0x')) {
+      hexPart = hexPart.substring(2);
     }
-    return normalized;
+
+    // Remove leading zeros and convert to uppercase
+    hexPart = int.parse(hexPart, radix: 16).toRadixString(16).toUpperCase();
+
+    return '0x$hexPart';
   }
 
   /// Get stream of sensor data for a specific node from sensor_data path
   /// Path: sensor_data/{userUID}/{nodeId}/{timestamp}
   ///
-  /// Gateway sends data with format: 0x65E8 (lowercase 0x, uppercase hex digits)
+  /// Gateway sends data with format: 0xA30 (uppercase hex digits)
+  /// User registry might have: 0x0a30 (lowercase with leading zeros)
+  /// This function normalizes both to: 0xA30
   Stream<List<SensorData>> getSensorDataStream({required String nodeId}) {
     final userUID = _currentUserUID;
     if (userUID == null) {
@@ -161,25 +197,59 @@ class FirebaseService {
       return Stream.value(<SensorData>[]);
     }
 
-    // Normalize to match Gateway format: 0x65E8 (lowercase 0x + uppercase hex)
-    String normalizedNodeId = _normalizeNodeId(nodeId); // 0x65e8
-    // Convert hex digits to uppercase but keep '0x' lowercase
-    normalizedNodeId =
-        '0x' + normalizedNodeId.substring(2).toUpperCase(); // 0x65E8
+    // Try multiple formats to handle different Firebase storage formats
+    List<String> possibleFormats = [
+      _normalizeNodeId(nodeId), // 0xA30
+      nodeId.toLowerCase(), // 0x0a30
+      nodeId.toUpperCase(), // 0X0A30
+      nodeId, // original format
+    ];
 
-    print('🔍 getSensorDataStream: $nodeId → $normalizedNodeId');
+    print(
+      '🔍 getSensorDataStream: $nodeId → trying formats: ${possibleFormats.join(", ")}',
+    );
 
-    final ref = database.ref('$sensorDataPath/$userUID/$normalizedNodeId');
-
-    return ref.orderByKey().limitToLast(100).onValue.map((event) {
-      if (event.snapshot.value == null) {
-        print('⚠️ No sensor data found for $normalizedNodeId');
-        return <SensorData>[];
+    // Try each format until we find data
+    return Stream.fromFuture(
+      _findSensorDataWithFormats(userUID, possibleFormats, nodeId),
+    ).asyncExpand((foundFormat) {
+      if (foundFormat != null) {
+        print('✅ Found sensor data using format: $foundFormat');
+        final ref = database.ref('$sensorDataPath/$userUID/$foundFormat');
+        return ref.orderByKey().limitToLast(100).onValue.map((event) {
+          if (event.snapshot.value == null) {
+            return <SensorData>[];
+          }
+          return _parseSensorData(event.snapshot.value, nodeId);
+        });
+      } else {
+        print('⚠️ No sensor data found for $nodeId in any format');
+        return Stream.value(<SensorData>[]);
       }
-
-      print('✅ Found sensor data for $normalizedNodeId');
-      return _parseSensorData(event.snapshot.value, normalizedNodeId);
     });
+  }
+
+  /// Helper function to find which format has data in Firebase
+  Future<String?> _findSensorDataWithFormats(
+    String userUID,
+    List<String> formats,
+    String originalNodeId,
+  ) async {
+    for (String format in formats) {
+      try {
+        final ref = database.ref('$sensorDataPath/$userUID/$format');
+        final snapshot = await ref.limitToLast(1).get();
+        if (snapshot.value != null) {
+          print('✅ Found data with format: $format for node: $originalNodeId');
+          return format;
+        } else {
+          print('❌ No data with format: $format for node: $originalNodeId');
+        }
+      } catch (e) {
+        print('❌ Error checking format $format: $e');
+      }
+    }
+    return null;
   }
 
   /// Helper to parse sensor data from Firebase snapshot
@@ -225,7 +295,10 @@ class FirebaseService {
     final userUID = _currentUserUID;
     if (userUID == null) return null;
 
-    final ref = database.ref('$sensorDataPath/$userUID/$nodeId');
+    // Normalize nodeId to match Gateway format
+    String normalizedNodeId = _normalizeNodeId(nodeId);
+
+    final ref = database.ref('$sensorDataPath/$userUID/$normalizedNodeId');
     final snapshot = await ref.orderByKey().limitToLast(1).get();
 
     if (snapshot.value == null) return null;
@@ -256,10 +329,13 @@ class FirebaseService {
       return <SensorData>[];
     }
 
+    // Normalize nodeId to match Gateway format
+    String normalizedNodeId = _normalizeNodeId(nodeId);
+
     final startTimestamp = startDate.millisecondsSinceEpoch ~/ 1000;
     final endTimestamp = endDate.millisecondsSinceEpoch ~/ 1000;
 
-    final ref = database.ref('$sensorDataPath/$userUID/$nodeId');
+    final ref = database.ref('$sensorDataPath/$userUID/$normalizedNodeId');
     final snapshot = await ref
         .orderByKey()
         .startAt(startTimestamp.toString())
@@ -425,10 +501,13 @@ class FirebaseService {
     final userUID = _currentUserUID;
     if (userUID == null) return;
 
+    // Normalize nodeId to match Gateway format
+    String normalizedNodeId = _normalizeNodeId(nodeId);
+
     final cutoffDate = DateTime.now().subtract(Duration(days: daysToKeep));
     final cutoffTimestamp = cutoffDate.millisecondsSinceEpoch ~/ 1000;
 
-    final ref = database.ref('$sensorDataPath/$userUID/$nodeId');
+    final ref = database.ref('$sensorDataPath/$userUID/$normalizedNodeId');
     final snapshot = await ref
         .orderByKey()
         .endAt(cutoffTimestamp.toString())
