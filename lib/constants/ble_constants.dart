@@ -57,6 +57,54 @@ class BleConstants {
   /// Format: KAGRI-NODE-XXXX (where XXXX = last 4 digits of Node MAC)
   static const String nodeNamePrefix = 'KAGRI-NODE-';
 
+  /// Handheld device name prefix
+  /// Format: KAGRI-HHC-XXXX (WiFi config), KAGRI-HHT-XXXX (sensor data)
+  static const String handheldNamePrefix = 'KAGRI-HH';
+
+  /// Handheld WiFi Config device prefix
+  /// Format: KAGRI-HHC-XXXX (where XXXX = last 4 digits of MAC)
+  /// Used when device is in WiFi configuration mode
+  static const String handheldWiFiNamePrefix = 'KAGRI-HHC-';
+
+  /// Handheld Sensor Data device prefix
+  /// Format: KAGRI-HHT-XXXX (where XXXX = last 4 digits of MAC)
+  /// Used when device is advertising sensor data for transmission
+  static const String handheldSensorNamePrefix = 'KAGRI-HHT-';
+
+  // ============================================================================
+  // HANDHELD BLE SERVICE & CHARACTERISTICS
+  // ============================================================================
+
+  /// Handheld WiFi Config BLE Service UUID
+  /// Used for provisioning Handheld devices with WiFi credentials via BLE
+  static const String handheldWiFiServiceUuid =
+      '0000ffb0-0000-1000-8000-00805f9b34fb';
+
+  /// Handheld WiFi Config Command Characteristic (Write)
+  /// Mobile app writes WiFi credentials to this characteristic
+  static const String handheldWiFiCommandCharUuid =
+      '0000ffb1-0000-1000-8000-00805f9b34fb';
+
+  /// Handheld WiFi Config Response Characteristic (Notify)
+  /// Handheld sends response via this characteristic
+  static const String handheldWiFiResponseCharUuid =
+      '0000ffb2-0000-1000-8000-00805f9b34fb';
+
+  /// Handheld Sensor Data BLE Service UUID
+  /// Used for receiving sensor data from Handheld devices via BLE
+  static const String handheldSensorServiceUuid =
+      '0000ffe0-0000-1000-8000-00805f9b34fb';
+
+  /// Handheld Sensor Data Characteristic (Notify)
+  /// Handheld sends sensor data via this characteristic
+  static const String handheldSensorDataCharUuid =
+      '0000ffe1-0000-1000-8000-00805f9b34fb';
+
+  /// Handheld Sensor Data Command Characteristic (Write)
+  /// Mobile app sends commands via this characteristic
+  static const String handheldSensorCommandCharUuid =
+      '0000ffe2-0000-1000-8000-00805f9b34fb';
+
   // ============================================================================
   // TIMEOUTS & DELAYS
   // ============================================================================
@@ -123,10 +171,33 @@ class BleConstants {
     return deviceName.toUpperCase().startsWith(nodeNamePrefix);
   }
 
+  /// Check if device name is a Handheld
+  static bool isHandheldDevice(String deviceName) {
+    return deviceName.toUpperCase().startsWith(handheldNamePrefix);
+  }
+
+  /// Check if device is Handheld in WiFi Config mode (KAGRI-HHC-XXXX)
+  static bool isHandheldWiFiDevice(String deviceName) {
+    return deviceName.toUpperCase().startsWith(handheldWiFiNamePrefix);
+  }
+
+  /// Check if device is Handheld in Sensor Data mode (KAGRI-HHT-XXXX)
+  static bool isHandheldSensorDevice(String deviceName) {
+    return deviceName.toUpperCase().startsWith(handheldSensorNamePrefix);
+  }
+
+  /// Get Handheld sub-type (WiFi config or Sensor data)
+  static HandheldType? getHandheldType(String deviceName) {
+    if (isHandheldWiFiDevice(deviceName)) return HandheldType.wiFiConfig;
+    if (isHandheldSensorDevice(deviceName)) return HandheldType.sensorData;
+    return null;
+  }
+
   /// Extract device type from name
   static DeviceType? getDeviceType(String deviceName) {
     if (isGatewayDevice(deviceName)) return DeviceType.gateway;
     if (isNodeDevice(deviceName)) return DeviceType.node;
+    if (isHandheldDevice(deviceName)) return DeviceType.handheld;
     return null;
   }
 
@@ -138,7 +209,40 @@ class BleConstants {
 }
 
 /// Device type enum
-enum DeviceType { gateway, node }
+enum DeviceType { gateway, node, handheld }
+
+/// Handheld sub-type enum
+enum HandheldType { wiFiConfig, sensorData }
+
+/// Extension for HandheldType display
+extension HandheldTypeExtension on HandheldType {
+  String get displayName {
+    switch (this) {
+      case HandheldType.wiFiConfig:
+        return 'WiFi Configuration';
+      case HandheldType.sensorData:
+        return 'Sensor Data';
+    }
+  }
+
+  String get description {
+    switch (this) {
+      case HandheldType.wiFiConfig:
+        return 'Configure WiFi credentials';
+      case HandheldType.sensorData:
+        return 'Receive sensor data';
+    }
+  }
+
+  String get icon {
+    switch (this) {
+      case HandheldType.wiFiConfig:
+        return '📡'; // WiFi config icon
+      case HandheldType.sensorData:
+        return '📊'; // Sensor data icon
+    }
+  }
+}
 
 /// Extension for DeviceType display
 extension DeviceTypeExtension on DeviceType {
@@ -148,6 +252,8 @@ extension DeviceTypeExtension on DeviceType {
         return 'Gateway';
       case DeviceType.node:
         return 'Node';
+      case DeviceType.handheld:
+        return 'Handheld Sensor';
     }
   }
 
@@ -157,6 +263,8 @@ extension DeviceTypeExtension on DeviceType {
         return '🌐'; // Gateway icon
       case DeviceType.node:
         return '📡'; // Node icon
+      case DeviceType.handheld:
+        return '📊'; // Handheld sensor icon
     }
   }
 }

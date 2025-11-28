@@ -75,18 +75,30 @@ class BleProvisioningService {
         final name = result.device.platformName;
         if (name.isEmpty) return false;
 
+        final isGateway = BleConstants.isGatewayDevice(name);
+        final isNode = BleConstants.isNodeDevice(name);
+        final isHandheldWiFi = BleConstants.isHandheldWiFiDevice(name);
+        final isHandheldSensor = BleConstants.isHandheldSensorDevice(name);
         final isKagriDevice =
-            BleConstants.isGatewayDevice(name) ||
-            BleConstants.isNodeDevice(name);
+            isGateway || isNode || isHandheldWiFi || isHandheldSensor;
+
+        // Debug: print all found devices
+        if (!isKagriDevice && name.contains('KAGRI')) {
+          print('[BLE] Found KAGRI device but not matched: $name');
+        }
 
         if (!isKagriDevice) return false;
 
         // Apply type filter if specified
         if (filterType != null) {
           final deviceType = BleConstants.getDeviceType(name);
+          if (deviceType == filterType) {
+            print('[BLE] ✓ Matched device: $name ($deviceType)');
+          }
           return deviceType == filterType;
         }
 
+        print('[BLE] ✓ Found device: $name');
         return true;
       }).toList();
 
@@ -402,8 +414,153 @@ class BleProvisioningService {
   }
 
   // ============================================================================
-  // PRIVATE HELPER METHODS
+  // HANDHELD WIFI PROVISIONING
   // ============================================================================
+
+  /// Provision Handheld device with WiFi credentials
+  ///
+  /// Sends:
+  /// ```json
+  /// {
+  ///   "ssid": "WiFi_SSID",
+  ///   "password": "password123",
+  ///   "userUID": "user-xxx"
+  /// }
+  /// ```
+  ///
+  /// Returns success response from device
+  Future<String> provisionHandheldWiFi({
+    required BluetoothDevice device,
+    required String ssid,
+    required String password,
+    Function(String)? onProgress,
+  }) async {
+    final uid = AuthService().currentUserUID;
+    if (uid == null) throw Exception('User not logged in');
+
+    if (ssid.isEmpty) throw Exception('SSID không được để trống');
+
+    onProgress?.call('Kết nối với thiết bị Handheld...');
+
+    // Discover services
+    onProgress?.call('Tìm kiếm BLE services...');
+    final services = await device.discoverServices();
+
+    final service = _findService(
+      services,
+      BleConstants.handheldWiFiServiceUuid,
+      'Handheld WiFi Config',
+    );
+
+    final commandChar = _findCharacteristic(
+      service,
+      BleConstants.handheldWiFiCommandCharUuid,
+      'Handheld Command',
+    );
+
+    final responseChar = _findCharacteristic(
+      service,
+      BleConstants.handheldWiFiResponseCharUuid,
+      'Handheld Response',
+    );
+
+    // Subscribe to notifications
+    onProgress?.call('Chuẩn bị nhận phản hồi...');
+    await responseChar.setNotifyValue(true);
+
+    // Stabilization delay
+    await Future.delayed(
+      Duration(milliseconds: BleConstants.connectionStabilizationDelayMs),
+    );
+
+    // Prepare payload (matches Handheld firmware expectation)
+    final payload = {'ssid': ssid, 'password': password, 'userUID': uid};
+
+    onProgress?.call('Gửi thông tin WiFi...');
+
+    return await _sendHandheldProvisioningData(
+      device: device,
+      commandChar: commandChar,
+      responseChar: responseChar,
+      payload: payload,
+      onProgress: onProgress,
+    );
+  }
+
+  /// Send provisioning data to Handheld and wait for response
+  Future<String> _sendHandheldProvisioningData({
+    required BluetoothDevice device,
+    required BluetoothCharacteristic commandChar,
+    required BluetoothCharacteristic responseChar,
+    required Map<String, dynamic> payload,
+    Function(String)? onProgress,
+  }) async {
+    // Encode payload
+    final jsonString = jsonEncode(payload);
+    print('[BLE] Sending Handheld payload: $jsonString');
+    final data = utf8.encode(jsonString);
+
+    // Listen for response
+    final completer = Completer<String>();
+    late StreamSubscription subscription;
+
+    subscription = responseChar.lastValueStream.listen((value) {
+      if (value.isNotEmpty && !completer.isCompleted) {
+        print('[BLE] Raw response: ${value.length} bytes');
+        try {
+          final responseStr = utf8.decode(value);
+          print('[BLE] Response decoded: $responseStr');
+
+          final response = jsonDecode(responseStr) as Map<String, dynamic>;
+          print('[BLE] Response parsed: $response');
+
+          final status = response[BleConstants.keyStatus];
+
+          if (status == BleConstants.statusSuccess) {
+            print('[BLE] ✓ Handheld WiFi provisioning successful');
+            final message = response[BleConstants.keyMessage] ?? 'Success';
+            completer.complete(message);
+          } else {
+            final message =
+                response[BleConstants.keyMessage] ?? 'Unknown error';
+            print('[BLE] ✗ Handheld provisioning failed: $message');
+            completer.completeError(Exception(message));
+          }
+        } catch (e) {
+          print('[BLE] ✗ Failed to parse response: $e');
+          completer.completeError(
+            Exception('Không thể phân tích phản hồi từ thiết bị'),
+          );
+        }
+      }
+    });
+
+    // Write data
+    onProgress?.call('Đang gửi dữ liệu...');
+    await commandChar.write(data, withoutResponse: true);
+    print('[BLE] Data written to Handheld');
+
+    // Wait for response with timeout
+    onProgress?.call('Chờ phản hồi từ thiết bị...');
+
+    try {
+      final result = await completer.future.timeout(
+        Duration(seconds: BleConstants.responseTimeoutSeconds),
+        onTimeout: () {
+          throw Exception(
+            'Timeout: Không nhận được phản hồi từ thiết bị sau '
+            '${BleConstants.responseTimeoutSeconds}s',
+          );
+        },
+      );
+
+      await subscription.cancel();
+      return result;
+    } catch (e) {
+      await subscription.cancel();
+      rethrow;
+    }
+  }
 
   /// Find service by UUID
   BluetoothService _findService(

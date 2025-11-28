@@ -522,6 +522,46 @@ class FirebaseService {
     }
   }
 
+  /// Upload Handheld sensor data to Firebase
+  /// Stores data in: sensor_data/{userUID}/handheld/{timestamp}
+  /// Also updates: nodes/handheld/latest_data (if it exists)
+  /// This is for manual sensor readings from handheld devices via BLE
+  Future<bool> addHandheldSensorData(
+    Map<String, dynamic> sensorDataJson,
+    String nodeId,
+  ) async {
+    try {
+      final userUID = _currentUserUID;
+      if (userUID == null) {
+        throw Exception('User not logged in');
+      }
+
+      // Create timestamp from current time or from provided timestamp
+      final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+      // Prepare data for Firebase
+      final data = Map<String, dynamic>.from(sensorDataJson);
+      data['timestamp'] = timestamp;
+      data['deviceType'] = 'soil_sensor'; // Handheld is soil sensor
+      data['nodeId'] = nodeId; // Use device-specific nodeID (last 2 bytes)
+
+      print('[Firebase] Uploading handheld sensor data: $data');
+
+      // Write to historical data: sensor_data/{userUID}/{nodeId}/{timestamp}
+      await database
+          .ref('$sensorDataPath/$userUID/$nodeId/$timestamp')
+          .set(data);
+
+      print(
+        '[Firebase] ✅ Handheld sensor data uploaded successfully to nodeID: $nodeId',
+      );
+      return true;
+    } catch (e) {
+      print('[Firebase] ❌ Error uploading handheld sensor data: $e');
+      return false;
+    }
+  }
+
   /// Register a new Gateway after BLE provisioning
   /// Creates initial entry in gateways/{userUID}/{gatewayMAC}/status
   /// and nodes/{userUID}/{gatewayMAC}/{gatewayNodeId}/info

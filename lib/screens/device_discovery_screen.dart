@@ -5,6 +5,8 @@ import '../constants/ble_constants.dart';
 import '../services/ble_provisioning_service.dart';
 import '../services/firebase_service.dart';
 import '../services/device_registry_service.dart';
+import 'handheld_provisioning_screen.dart';
+import 'handheld_sensor_data_screen.dart';
 
 /// Device Discovery Screen
 ///
@@ -179,7 +181,56 @@ class _DeviceDiscoveryScreenState extends State<DeviceDiscoveryScreen>
 
     print('[DeviceDiscovery] Widget still mounted, continuing...');
 
-    // Show progress dialog and start provisioning
+    // For Handheld devices, check if it's WiFi config or Sensor data mode
+    if (deviceType == DeviceType.handheld) {
+      print('[DeviceDiscovery] Handheld device detected: $deviceName');
+
+      final handheldType = BleConstants.getHandheldType(deviceName);
+      print('[DeviceDiscovery] Handheld type: $handheldType');
+
+      if (!mounted) return;
+
+      if (handheldType == HandheldType.wiFiConfig) {
+        // KAGRI-HHC: WiFi Configuration mode
+        print('[DeviceDiscovery] KAGRI-HHC detected - WiFi config mode');
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                HandheldProvisioningScreen(device: result.device),
+          ),
+        ).then((_) {
+          print(
+            '[DeviceDiscovery] Returning from WiFi provisioning, resuming scan',
+          );
+          if (mounted) _checkBluetoothAndStartScan();
+        });
+        return;
+      } else if (handheldType == HandheldType.sensorData) {
+        // KAGRI-HHT: Sensor Data mode
+        print('[DeviceDiscovery] KAGRI-HHT detected - Sensor data mode');
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                HandheldSensorDataScreen(device: result.device),
+          ),
+        ).then((_) {
+          print(
+            '[DeviceDiscovery] Returning from sensor data reception, resuming scan',
+          );
+          if (mounted) _checkBluetoothAndStartScan();
+        });
+        return;
+      } else {
+        print('[DeviceDiscovery] Unknown Handheld type');
+        _showError('Lỗi', 'Loại Handheld không xác định');
+        if (mounted) _checkBluetoothAndStartScan();
+        return;
+      }
+    }
+
+    // Show progress dialog and start provisioning for Gateway/Node
     print(
       '[DeviceDiscovery] Starting provisioning for ${deviceType.displayName}',
     );

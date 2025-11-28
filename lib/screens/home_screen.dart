@@ -1938,6 +1938,26 @@ class _HomeScreenState extends State<HomeScreen>
                   );
                 },
               ),
+              ListTile(
+                leading: const Icon(
+                  Icons.devices_other,
+                  color: Colors.deepOrange,
+                ),
+                title: const Text('Handheld'),
+                onTap: () async {
+                  Navigator.pop(context); // Close bottom sheet
+
+                  // Navigate to BLE device discovery (Handheld only)
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const DeviceDiscoveryScreen(
+                        initialFilterType: DeviceType.handheld,
+                      ),
+                    ),
+                  );
+                },
+              ),
               const SizedBox(height: 8),
             ],
           ),
